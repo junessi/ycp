@@ -1,14 +1,28 @@
 import json
 import youtube_dl
 import npyscreen
+import os.path
+import sys
 
-class MusicList(npyscreen.Form):
+class MusicList(npyscreen.ActionForm):
     def create(self):
+       music_list = self.load_music_list()
        self.musicList = self.add(npyscreen.GridColTitles,
-                                 col_titles = ["artist", "title"],
-                                 columns = 2,
+                                 col_titles = ["artist", "title", "link"],
+                                 columns = 3,
+                                 column_margin = 0,
+                                 values = [[item["artist"], item["title"], item["link"]] for item in music_list["items"]],
                                  select_whole_line = True)
-       self.musicList.set_grid_values_from_flat_list(["a", "b"])
+
+    def load_music_list(self):
+        list_file = "ycp.json"
+        if os.path.isfile(list_file):
+            return json.load(open(list_file, "r"))
+
+        return {}
+
+    def on_ok(self):
+        sys.exit(0)
 
 class MyApplication(npyscreen.NPSAppManaged):
    def onStart(self):
