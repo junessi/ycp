@@ -3,6 +3,7 @@ import youtube_dl
 import npyscreen
 import os.path
 import sys
+import time
 
 class MusicList(npyscreen.ActionForm):
     def create(self):
@@ -40,12 +41,23 @@ class MusicList(npyscreen.ActionForm):
             }]
         }
 
+        text = ""
+        # npyscreen.notify(text, title='Popup Title')
+        p = npyscreen.Popup(name="")
+        p.preserve_selected_widget = True
+        mlw = p.add(npyscreen.Pager,)
+        mlw_width = mlw.width-1
+        p.center_on_display()
+        p.display()
         for item in self.music_list["items"]:
-            print(item)
+            mlw.values = [item["artist"]]
+            p.display()
+            time.sleep(3)
+            """
             ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], audio_format)
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item["link"]])
-
+                """
 
 class MyApplication(npyscreen.NPSAppManaged):
    def onStart(self):
