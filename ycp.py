@@ -5,6 +5,16 @@ import os.path
 import sys
 import time
 
+class DownloadLogger(object):
+    def debug(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        print(msg)
+
 class MusicList(npyscreen.ActionForm):
     def create(self):
        self.music_list = self.load_music_list()
@@ -18,6 +28,7 @@ class MusicList(npyscreen.ActionForm):
                                            for item in self.music_list["items"]],
                                  select_whole_line = True)
 
+       self.audio_format = "mp3"
        self.OK_BUTTON_TEXT = "Exit"
        self.CANCEL_BUTTON_TEXT = "Download"
 
@@ -32,32 +43,50 @@ class MusicList(npyscreen.ActionForm):
         sys.exit(0)
 
     def on_cancel(self):
-        audio_format = "mp3"
         ydl_opts = {
             'format': 'bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
-                'preferredcodec': audio_format
-            }]
+                'preferredcodec': self.audio_format
+            }],
+            'logger': DownloadLogger(), # avoid outputing to stdout
+            'progress_hooks': [self.progress_hook],
         }
 
-        text = ""
-        # npyscreen.notify(text, title='Popup Title')
-        p = npyscreen.Popup(name="")
-        p.preserve_selected_widget = True
-        mlw = p.add(npyscreen.Pager,)
-        mlw_width = mlw.width-1
-        p.center_on_display()
-        p.display()
+        self.download_popup = npyscreen.Popup(name="")
+        self.download_popup.preserve_selected_widget = True
+        self.mlw = self.download_popup.add(npyscreen.Pager,)
+        self.download_popup.center_on_display()
+        self.download_popup.display()
+        self.num_items = len(self.music_list["items"])
+        self.ith_item = 0
         for item in self.music_list["items"]:
-            mlw.values = [item["artist"]]
-            p.display()
-            time.sleep(3)
-            """
-            ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], audio_format)
+            self.ith_item += 1
+            self.mlw.values = ["task {0}/{1}".format(self.ith_item, self.num_items),
+                               "starting download {0} - {1}".format(item["artist"], item["title"])]
+            self.downloading_item = item
+            self.download_popup.display()
+            time.sleep(2)
+            ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item["link"]])
-                """
+
+        # delay closing popup for 3 seconds
+        self.mlw.values = ["{0} task(s) finished".format(self.num_items)]
+        self.download_popup.display()
+        time.sleep(3)
+
+    def progress_hook(self, d):
+        status = ["task {0}/{1}".format(self.ith_item, self.num_items)]
+        if d['status'] == 'finished':
+            status.append("downloaded to {0}".format(d["filename"]))
+            status.append("converting to {0}".format(self.audio_format))
+        elif d['status'] == 'downloading':
+            status.append("downloading {0} - {1}".format(self.downloading_item["artist"],
+                                                         self.downloading_item["title"]))
+
+        self.mlw.values = status
+        self.download_popup.display()
 
 class MyApplication(npyscreen.NPSAppManaged):
    def onStart(self):
