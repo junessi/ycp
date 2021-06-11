@@ -4,6 +4,7 @@ import npyscreen
 import os.path
 import sys
 import time
+import curses
 
 class DownloadLogger(object):
     def debug(self, msg):
@@ -17,7 +18,7 @@ class DownloadLogger(object):
 
 class MusicList(npyscreen.ActionForm):
     def create(self):
-       self.music_list = self.load_music_list()
+       self.load_music_list()
        self.musicList = self.add(npyscreen.GridColTitles,
                                  col_titles = ["{0}{1}link".format("artist".ljust(32), "title".ljust(32))],
                                  columns = 1,
@@ -31,13 +32,19 @@ class MusicList(npyscreen.ActionForm):
        self.audio_format = "mp3"
        self.OK_BUTTON_TEXT = "Exit"
        self.CANCEL_BUTTON_TEXT = "Download"
+       self.add_handlers({"a": self.add_music})
+
+    def add_music(self, s):
+        print(s)
+        self.parentApp.change_form("AddMusic")
 
     def load_music_list(self):
         list_file = "ycp.json"
+        self.music_list = {}
         if os.path.isfile(list_file):
-            return json.load(open(list_file, "r"))
-
-        return {}
+            items = json.load(open(list_file, "r"))
+            if "items" in items:
+                self.music_list = items
 
     def on_ok(self):
         sys.exit(0)
@@ -88,9 +95,26 @@ class MusicList(npyscreen.ActionForm):
         self.mlw.values = status
         self.download_popup.display()
 
+class AddMusicForm(npyscreen.Form):
+    def on_ok(self):
+        # self.parentApp.switchFormPrevious()
+        self.parentApp.setNextForm("MAIN")
+
+    def create(self):
+        self.artist = self.add(npyscreen.TitleText, name="Artist: ")
+        self.title = self.add(npyscreen.TitleText, name="Title: ")
+        self.link = self.add(npyscreen.TitleText, name="Link: ")
+
+    def afterEditing(self):
+        self.parentApp.setNextForm("MAIN")
+
 class MyApplication(npyscreen.NPSAppManaged):
-   def onStart(self):
-       self.addForm('MAIN', MusicList)
+    def onStart(self):
+        self.addForm('MAIN', MusicList)
+        self.addForm('AddMusic', AddMusicForm)
+
+    def change_form(self, name):
+        self.switchForm(name)
 
 if __name__ == '__main__':
     TestApp = MyApplication().run()
