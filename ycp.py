@@ -1,122 +1,105 @@
+import urwid
 import json
-import youtube_dl
-import npyscreen
-import os.path
-import sys
-import time
-import curses
 
-class DownloadLogger(object):
-    def debug(self, msg):
+class SelectableRow(urwid.WidgetWrap):
+    def __init__(self, contents, on_select=None):
+        self.contents = contents
+        self.on_select = on_select
+
+        self._columns = urwid.Columns([urwid.Text(c) for c in contents])
+        self._focusable_columns = urwid.AttrMap(self._columns, '', 'reveal_focus')
+
+        super(SelectableRow, self).__init__(self._focusable_columns)
+
+    def selectable(self):
+        return True
+
+    def update_contents(self, contents):
+        # update the list record inplace...
+        self.contents[:] = contents
+
+        # ... and update the displayed items
+        for t, (w, _) in zip(contents, self._columns.contents):
+            w.set_text(t)
+
+    def keypress(self, size, key):
+        if self.on_select and key in ('enter',):
+            self.on_select(self)
+        return key
+
+    def __repr__(self):
+        return '%s(contents=%r)' % (self.__class__.__name__, self.contents)
+
+class MyListBox(urwid.ListBox):
+    def __init__(self, body, on_focus_change=None):
+        super().__init__(body)
+
+        self.on_focus_change = on_focus_change
+
+    # Overriden
+    def change_focus(self, size, position, offset_inset=0, coming_from=None, cursor_coords=None, snap_rows=None):
+        super().change_focus(size,
+                             position,
+                             offset_inset,
+                             coming_from,
+                             cursor_coords,
+                             snap_rows)
+
+        # Implement a hook to be able to deposit additional logic
+        if self.on_focus_change != None:
+            self.on_focus_change(size,
+                                 position,
+                                 offset_inset,
+                                 coming_from,
+                                 cursor_coords,
+                                 snap_rows)
+
+class App(object):
+
+    def __init__(self):
+        self.HEADERS = ["Artist", "Title", "Link"]
+        music_list = self.read_music_list()
+        self.ENTRIES = [[item["artist"], item["title"], item["link"]] for item in music_list["items"]]
+        self.PALETTE = [
+            ("column_headers", "white, bold", ""),
+            ("notifier_active",   "dark cyan",  "light gray"),
+            ("notifier_inactive", "black", "dark gray"),
+            ("reveal_focus",      "black",      "dark cyan", "standout")
+        ]
+
+        column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
+
+        contents = [SelectableRow(entry) for entry in self.ENTRIES]
+        self.listbox = MyListBox(urwid.SimpleFocusListWalker(contents), self.update_notifiers)
+
+        # Get terminal dimensions
+        terminal_cols, terminal_rows = urwid.raw_display.Screen().get_cols_rows()
+        list_rows = (terminal_rows - 2) if (terminal_rows > 7) else 5
+
+        master_pile = urwid.Pile([
+            urwid.Divider(u'─'),
+            column_headers,
+            urwid.Divider(u'─'),
+            urwid.BoxAdapter(self.listbox, list_rows),
+            urwid.Divider(u'─'),
+        ])
+
+        music_list = urwid.Filler(master_pile, 'top')
+        self.loop = urwid.MainLoop(music_list, self.PALETTE, unhandled_input = self.exit_app)
+
+    def read_music_list(self):
+        f = open("ycp.json", "r")
+        return json.load(f)
+
+    def update_notifiers(self, size, position, offset_inset, coming_from, cursor_coords, snap_rows):
         pass
 
-    def warning(self, msg):
-        pass
+    def exit_app(self, key):
+        if key in ('q', 'Q', 'esc'):
+            raise urwid.ExitMainLoop()
 
-    def error(self, msg):
-        print(msg)
-
-class MusicList(npyscreen.ActionForm):
-    def create(self):
-       self.load_music_list()
-       self.musicList = self.add(npyscreen.GridColTitles,
-                                 col_titles = ["{0}{1}link".format("artist".ljust(32), "title".ljust(32))],
-                                 columns = 1,
-                                 column_margin = 0,
-                                 values = [["{0}{1}{2}".format(item["artist"].ljust(32),
-                                                               item["title"].ljust(32),
-                                                               item["link"])]
-                                           for item in self.music_list["items"]],
-                                 select_whole_line = True)
-
-       self.audio_format = "mp3"
-       self.OK_BUTTON_TEXT = "Exit"
-       self.CANCEL_BUTTON_TEXT = "Download"
-       self.add_handlers({"a": self.add_music})
-
-    def add_music(self, s):
-        print(s)
-        self.parentApp.change_form("AddMusic")
-
-    def load_music_list(self):
-        list_file = "ycp.json"
-        self.music_list = {}
-        if os.path.isfile(list_file):
-            items = json.load(open(list_file, "r"))
-            if "items" in items:
-                self.music_list = items
-
-    def on_ok(self):
-        sys.exit(0)
-
-    def on_cancel(self):
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': self.audio_format
-            }],
-            'logger': DownloadLogger(), # avoid outputing to stdout
-            'progress_hooks': [self.progress_hook],
-        }
-
-        self.download_popup = npyscreen.Popup(name="")
-        self.download_popup.preserve_selected_widget = True
-        self.mlw = self.download_popup.add(npyscreen.Pager,)
-        self.download_popup.center_on_display()
-        self.download_popup.display()
-        self.num_items = len(self.music_list["items"])
-        self.ith_item = 0
-        for item in self.music_list["items"]:
-            self.ith_item += 1
-            self.mlw.values = ["task {0}/{1}".format(self.ith_item, self.num_items),
-                               "starting download {0} - {1}".format(item["artist"], item["title"])]
-            self.downloading_item = item
-            self.download_popup.display()
-            time.sleep(2)
-            ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
-            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([item["link"]])
-
-        # delay closing popup for 3 seconds
-        self.mlw.values = ["{0} task(s) finished".format(self.num_items)]
-        self.download_popup.display()
-        time.sleep(3)
-
-    def progress_hook(self, d):
-        status = ["task {0}/{1}".format(self.ith_item, self.num_items)]
-        if d['status'] == 'finished':
-            status.append("downloaded to {0}".format(d["filename"]))
-            status.append("converting to {0}".format(self.audio_format))
-        elif d['status'] == 'downloading':
-            status.append("downloading {0} - {1}".format(self.downloading_item["artist"],
-                                                         self.downloading_item["title"]))
-
-        self.mlw.values = status
-        self.download_popup.display()
-
-class AddMusicForm(npyscreen.Form):
-    def on_ok(self):
-        # self.parentApp.switchFormPrevious()
-        self.parentApp.setNextForm("MAIN")
-
-    def create(self):
-        self.artist = self.add(npyscreen.TitleText, name="Artist: ")
-        self.title = self.add(npyscreen.TitleText, name="Title: ")
-        self.link = self.add(npyscreen.TitleText, name="Link: ")
-
-    def afterEditing(self):
-        self.parentApp.setNextForm("MAIN")
-
-class MyApplication(npyscreen.NPSAppManaged):
-    def onStart(self):
-        self.addForm('MAIN', MusicList)
-        self.addForm('AddMusic', AddMusicForm)
-
-    def change_form(self, name):
-        self.switchForm(name)
+    def run(self):
+        self.loop.run()
 
 if __name__ == '__main__':
-    TestApp = MyApplication().run()
-
-
+    App().run()
