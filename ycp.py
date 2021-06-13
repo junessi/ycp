@@ -169,8 +169,9 @@ class App(object):
                 self.view.append(urwid.Pile(self.music_list))
                 self.display_edit = False
             else:
-                item_editor = urwid.Edit(u"Artist: ", u"")
-                self.view.append(urwid.Pile([item_editor] + self.music_list))
+                item_editor = [urwid.Edit(u"Artist: ", u""), urwid.Edit(u"Title: ", u""), urwid.Edit(u"Link: ", u"")]
+                item_editor.append(urwid.Columns([urwid.Button(u"Save"), urwid.Button(u"Cancel")]))
+                self.view.append(urwid.Pile(item_editor + self.music_list))
                 self.display_edit = True
 
     def exit(self):
