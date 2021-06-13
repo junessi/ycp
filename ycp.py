@@ -23,12 +23,13 @@ class SelectableRow(urwid.WidgetWrap):
             w.set_text(t)
 
     def keypress(self, size, key):
-        if self.on_select and key in ('enter',):
-            self.on_select(self)
-        return key
+        if self.on_select:
+            if key == 'enter':
+                self.on_select()
+            elif key in ('e', 'E'):
+                self.on_select()
 
-    def __repr__(self):
-        return '%s(contents=%r)' % (self.__class__.__name__, self.contents)
+        return key
 
 class MyListBox(urwid.ListBox):
     def __init__(self, body, on_focus_change=None):
@@ -54,12 +55,84 @@ class MyListBox(urwid.ListBox):
                                  cursor_coords,
                                  snap_rows)
 
-class App(object):
-
-    def __init__(self):
+class MusicList(urwid.PopUpLauncher):
+    signals = ['close']
+    def __init__(self, on_edit_callback = None):
+        self.on_edit_callback = on_edit_callback
         self.HEADERS = ["Artist", "Title", "Link"]
         music_list = self.read_music_list()
         self.ENTRIES = [[item["artist"], item["title"], item["link"]] for item in music_list["items"]]
+        column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
+
+        rows = []
+        for entry in self.ENTRIES:
+            row = SelectableRow(entry, self.on_edit_callback)
+            rows.append(row)
+        self.content = urwid.SimpleFocusListWalker(rows)
+        self.listbox = MyListBox(self.content)
+
+        # Get terminal dimensions
+        terminal_cols, terminal_rows = urwid.raw_display.Screen().get_cols_rows()
+        list_rows = (terminal_rows - 2) if (terminal_rows > 7) else 5
+        self.list_box = urwid.BoxAdapter(self.listbox, list_rows)
+
+        self.layout = [
+            urwid.Divider(u'─'),
+            column_headers,
+            urwid.Divider(u'─'),
+            self.list_box,
+            urwid.Divider(u'─'),
+        ]
+
+    def create_pop_up(self):
+        pop_up = PopUpDialog()
+        urwid.connect_signal(pop_up, 'close',
+            lambda button: self.close_pop_up())
+        return pop_up
+
+    def get_pop_up_parameters(self):
+        return {'left':0, 'top':1, 'overlay_width':32, 'overlay_height':7}
+
+    def read_music_list(self):
+        f = open("ycp.json", "r")
+        return json.load(f)
+
+    def get_layout(self):
+        return self.layout
+
+"""
+class PopUpDialog(urwid.WidgetWrap):
+    signals = ['close']
+    def __init__(self):
+        close_button = urwid.Button("that's pretty cool")
+        urwid.connect_signal(close_button, 'click',
+            lambda button:self._emit("close"))
+        pile = urwid.Pile([urwid.Text(
+            "^^  I'm attached to the widget that opened me. "
+            "Try resizing the window!\n"), close_button])
+        fill = urwid.Filler(pile)
+        self.__super.__init__(urwid.AttrWrap(fill, 'popbg'))
+
+
+class ThingWithAPopUp(urwid.PopUpLauncher):
+    def __init__(self):
+        self.music_list = MusicList().get_layout()
+        self.__super.__init__(urwid.Button("click-me"))
+        urwid.connect_signal(self.original_widget, 'click',
+            lambda button: self.open_pop_up())
+
+    def create_pop_up(self):
+        pop_up = PopUpDialog()
+        urwid.connect_signal(pop_up, 'close',
+            lambda button: self.close_pop_up())
+        return pop_up
+
+    def get_pop_up_parameters(self):
+        return {'left':0, 'top':1, 'overlay_width':32, 'overlay_height':7}
+"""
+
+class App(object):
+    def __init__(self):
         self.PALETTE = [
             ("column_headers", "white, bold", ""),
             ("notifier_active",   "dark cyan",  "light gray"),
@@ -67,36 +140,41 @@ class App(object):
             ("reveal_focus",      "black",      "dark cyan", "standout")
         ]
 
-        column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
+        self.music_list = MusicList(self.on_edit_item).get_layout()
+        # self.layout = urwid.ListBox(self.music_list.get_layout())
 
-        contents = [SelectableRow(entry) for entry in self.ENTRIES]
-        self.listbox = MyListBox(urwid.SimpleFocusListWalker(contents), self.update_notifiers)
+        self.display_edit = False
+        self.view = urwid.SimpleFocusListWalker([])
+        self.view.append(urwid.Pile(self.music_list))
+        self.list = urwid.ListBox(self.view)
+        self.loop = urwid.MainLoop(self.list, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
 
-        # Get terminal dimensions
-        terminal_cols, terminal_rows = urwid.raw_display.Screen().get_cols_rows()
-        list_rows = (terminal_rows - 2) if (terminal_rows > 7) else 5
+        """
+        fill = urwid.Filler(urwid.Padding(ThingWithAPopUp(), 'center', 15))
+        self.loop = urwid.MainLoop(
+            fill,
+            [('popbg', 'white', 'dark blue')],
+            pop_ups=True)
+        """
 
-        master_pile = urwid.Pile([
-            urwid.Divider(u'─'),
-            column_headers,
-            urwid.Divider(u'─'),
-            urwid.BoxAdapter(self.listbox, list_rows),
-            urwid.Divider(u'─'),
-        ])
+    def on_edit_item(self):
+        self.handle_input('a')
 
-        music_list = urwid.Filler(master_pile, 'top')
-        self.loop = urwid.MainLoop(music_list, self.PALETTE, unhandled_input = self.exit_app)
-
-    def read_music_list(self):
-        f = open("ycp.json", "r")
-        return json.load(f)
-
-    def update_notifiers(self, size, position, offset_inset, coming_from, cursor_coords, snap_rows):
-        pass
-
-    def exit_app(self, key):
+    def handle_input(self, key):
         if key in ('q', 'Q', 'esc'):
-            raise urwid.ExitMainLoop()
+            self.exit()
+        elif key in ('a', 'A'):
+            self.view.clear()
+            if self.display_edit:
+                self.view.append(urwid.Pile(self.music_list))
+                self.display_edit = False
+            else:
+                item_editor = urwid.Edit(u"Artist: ", u"")
+                self.view.append(urwid.Pile([item_editor] + self.music_list))
+                self.display_edit = True
+
+    def exit(self):
+        raise urwid.ExitMainLoop()
 
     def run(self):
         self.loop.run()
