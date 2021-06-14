@@ -90,6 +90,9 @@ class MusicList(urwid.PopUpLauncher):
             lambda button: self.close_pop_up())
         return pop_up
 
+    def add_music(self, artist, title, link):
+        self.content.append(SelectableRow([artist, title, link], self.on_edit_callback))
+
     def get_pop_up_parameters(self):
         return {'left':0, 'top':1, 'overlay_width':32, 'overlay_height':7}
 
@@ -100,37 +103,6 @@ class MusicList(urwid.PopUpLauncher):
     def get_layout(self):
         return self.layout
 
-"""
-class PopUpDialog(urwid.WidgetWrap):
-    signals = ['close']
-    def __init__(self):
-        close_button = urwid.Button("that's pretty cool")
-        urwid.connect_signal(close_button, 'click',
-            lambda button:self._emit("close"))
-        pile = urwid.Pile([urwid.Text(
-            "^^  I'm attached to the widget that opened me. "
-            "Try resizing the window!\n"), close_button])
-        fill = urwid.Filler(pile)
-        self.__super.__init__(urwid.AttrWrap(fill, 'popbg'))
-
-
-class ThingWithAPopUp(urwid.PopUpLauncher):
-    def __init__(self):
-        self.music_list = MusicList().get_layout()
-        self.__super.__init__(urwid.Button("click-me"))
-        urwid.connect_signal(self.original_widget, 'click',
-            lambda button: self.open_pop_up())
-
-    def create_pop_up(self):
-        pop_up = PopUpDialog()
-        urwid.connect_signal(pop_up, 'close',
-            lambda button: self.close_pop_up())
-        return pop_up
-
-    def get_pop_up_parameters(self):
-        return {'left':0, 'top':1, 'overlay_width':32, 'overlay_height':7}
-"""
-
 class App(object):
     def __init__(self):
         self.PALETTE = [
@@ -140,12 +112,23 @@ class App(object):
             ("reveal_focus",      "black",      "dark cyan", "standout")
         ]
 
-        self.music_list = MusicList(self.on_edit_item).get_layout()
-        # self.layout = urwid.ListBox(self.music_list.get_layout())
+        self.music_list = MusicList(self.on_edit_item)
 
+        self.artist_edit = urwid.Edit(u"Artist: ", u"")
+        self.title_edit = urwid.Edit(u"Title: ", u"")
+        self.link_edit = urwid.Edit(u"Link: ", u"")
+        self.item_editor = [self.artist_edit, self.title_edit, self.link_edit]
+        self.save_button = urwid.Button(u"Save", lambda button : self.add_music(self.artist_edit.get_edit_text(),
+                                                                                self.title_edit.get_edit_text(),
+                                                                                self.link_edit.get_edit_text()
+                                                                                ))
+        self.cancel_button = urwid.Button(u"Cancel", lambda button : self.handle_input('q'))
+        self.item_editor.append(urwid.Columns([self.save_button, self.cancel_button]))
+
+        self.adding_music = False
         self.display_edit = False
         self.view = urwid.SimpleFocusListWalker([])
-        self.view.append(urwid.Pile(self.music_list))
+        self.view.append(urwid.Pile(self.music_list.get_layout()))
         self.list = urwid.ListBox(self.view)
         self.loop = urwid.MainLoop(self.list, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
 
@@ -162,17 +145,25 @@ class App(object):
 
     def handle_input(self, key):
         if key in ('q', 'Q', 'esc'):
-            self.exit()
-        elif key in ('a', 'A'):
-            self.view.clear()
-            if self.display_edit:
-                self.view.append(urwid.Pile(self.music_list))
-                self.display_edit = False
+            if self.adding_music:
+                self.display_edit_dialog(False)
+                self.adding_music = False
             else:
-                item_editor = [urwid.Edit(u"Artist: ", u""), urwid.Edit(u"Title: ", u""), urwid.Edit(u"Link: ", u"")]
-                item_editor.append(urwid.Columns([urwid.Button(u"Save"), urwid.Button(u"Cancel")]))
-                self.view.append(urwid.Pile(item_editor + self.music_list))
-                self.display_edit = True
+                self.exit()
+        elif key in ('a', 'A'):
+            self.display_edit_dialog(True)
+            self.adding_music = True
+
+    def add_music(self, artist, title, link):
+        self.music_list.add_music(artist, title, link)
+        self.handle_input('q')
+
+    def display_edit_dialog(self, display):
+        self.view.clear()
+        if display:
+            self.view.append(urwid.Pile(self.item_editor + self.music_list.get_layout()))
+        else:
+            self.view.append(urwid.Pile(self.music_list.get_layout()))
 
     def exit(self):
         raise urwid.ExitMainLoop()
