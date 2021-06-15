@@ -73,15 +73,14 @@ class MusicList(urwid.PopUpLauncher):
 
         # Get terminal dimensions
         terminal_cols, terminal_rows = urwid.raw_display.Screen().get_cols_rows()
-        list_rows = (terminal_rows - 2) if (terminal_rows > 7) else 5
+        list_rows = (terminal_rows - 3) if (terminal_rows > 7) else 5
         self.list_box = urwid.BoxAdapter(self.listbox, list_rows)
 
         self.layout = [
             urwid.Divider(u'─'),
             column_headers,
             urwid.Divider(u'─'),
-            self.list_box,
-            urwid.Divider(u'─'),
+            self.list_box
         ]
 
     def create_pop_up(self):
@@ -93,6 +92,11 @@ class MusicList(urwid.PopUpLauncher):
     def add_music(self, artist, title, link):
         self.content.append(SelectableRow([artist, title, link], self.on_edit_callback))
 
+    def get_music(self, index):
+        return {"artist": self.ENTRIES[index][0],
+                "title": self.ENTRIES[index][1],
+                "link": self.ENTRIES[index][2]}
+
     def get_pop_up_parameters(self):
         return {'left':0, 'top':1, 'overlay_width':32, 'overlay_height':7}
 
@@ -102,6 +106,10 @@ class MusicList(urwid.PopUpLauncher):
 
     def get_layout(self):
         return self.layout
+
+    def get_cursor_position(self):
+        (_, pos) = self.listbox.get_focus()
+        return pos
 
 class App(object):
     def __init__(self):
@@ -153,14 +161,22 @@ class App(object):
         elif key in ('a', 'A'):
             self.display_edit_dialog(True)
             self.adding_music = True
+        elif key in ('e', 'E'):
+            pos = self.music_list.get_cursor_position()
+            data = self.music_list.get_music(pos)
+            self.display_edit_dialog(True, data)
 
     def add_music(self, artist, title, link):
         self.music_list.add_music(artist, title, link)
         self.handle_input('q')
 
-    def display_edit_dialog(self, display):
+    def display_edit_dialog(self, display, data = None):
         self.view.clear()
         if display:
+            if data is not None:
+                self.artist_edit.set_edit_text(data["artist"])
+                self.title_edit.set_edit_text(data["title"])
+                self.link_edit.set_edit_text(data["link"])
             self.view.append(urwid.Pile(self.item_editor + self.music_list.get_layout()))
         else:
             self.view.append(urwid.Pile(self.music_list.get_layout()))
