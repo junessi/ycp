@@ -1,2 +1,2 @@
 # ycp
-Download youtube videos as mp3 with a configuration file.
+A TUI-based youtube downloader.
