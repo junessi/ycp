@@ -4,6 +4,9 @@ import time
 import youtube_dl
 
 class DownloadLogger(object):
+    def __init__(self, parent):
+        self.parent = parent
+
     def debug(self, msg):
         pass
 
@@ -11,7 +14,7 @@ class DownloadLogger(object):
         pass
 
     def error(self, msg):
-        print(msg)
+        self.parent.log_error(msg)
 
 class SelectableRow(urwid.WidgetWrap):
     def __init__(self, contents, on_select=None):
@@ -83,11 +86,12 @@ class MusicList(urwid.ListBox):
 
 class MusicListView(object):
     signals = ['close']
-    def __init__(self):
+    def __init__(self, height):
+        self.height = height
         self.music_list_file = "ycp.json"
         self.HEADERS = ["Artist", "Title", "Link"]
         music_list = self.read_music_list()
-        column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
+        self.column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
 
         self.selectable_rows = []
         for item in music_list["items"]:
@@ -96,19 +100,10 @@ class MusicListView(object):
         self.music_items = urwid.SimpleFocusListWalker(self.selectable_rows)
         self.music_list = MusicList(self.music_items)
 
-        # Get terminal dimensions
-        (_, terminal_rows) = urwid.raw_display.Screen().get_cols_rows()
-        # edit dialog occupies 3 rows and status bar occupis 1 row,
-        # so we minus 4 rows from total, rest for the music list.
-        height = terminal_rows - 4
-        self.list_box = urwid.BoxAdapter(self.music_list, height)
+        self.listview_container = urwid.BoxAdapter(self.music_list, self.height)
 
-        self.layout = [
-            urwid.Divider(u'─'),
-            column_headers,
-            urwid.Divider(u'─'),
-            self.list_box
-        ]
+    def set_height(self, height):
+        self.height = height
 
     def create_pop_up(self):
         pop_up = PopUpDialog()
@@ -138,7 +133,10 @@ class MusicListView(object):
         return json.load(f)
 
     def get_layout(self):
-        return self.layout
+        return [urwid.Divider(u'─'),
+                self.column_headers,
+                urwid.Divider(u'─'),
+                urwid.BoxAdapter(self.music_list, self.height - 3)]
 
     def get_cursor_position(self):
         (_, pos) = self.music_list.get_focus()
@@ -152,6 +150,9 @@ class App(object):
             ("notifier_inactive", "black", "dark gray"),
             ("reveal_focus",      "black",      "dark cyan", "standout")
         ]
+
+        # Get terminal size
+        (self.terminal_cols, self.terminal_rows) = urwid.raw_display.Screen().get_cols_rows()
 
         self.audio_format = "mp3"
         self.adding_music = False
@@ -170,12 +171,13 @@ class App(object):
         self.item_editor.append(urwid.Columns([self.save_button, self.cancel_button]))
 
         ######## music list ########
-        self.music_list_view = MusicListView()
+        self.music_list_view = MusicListView(self.terminal_rows - 1) # status bar occupies one row
         self.view = urwid.SimpleFocusListWalker([])
         self.view.append(urwid.Pile(self.music_list_view.get_layout()))
 
         ######## status bar ########
-        self.status_bar = urwid.Text("status")
+        self.hint_text = "Q/ESC: Quit    A: add    E:edit music"
+        self.status_bar = urwid.Text(self.hint_text)
         self.view.append(self.status_bar)
 
         self.list = urwid.ListBox(self.view)
@@ -190,16 +192,19 @@ class App(object):
                 self.adding_music = False
                 self.editing_music = False
                 self.display_edit_dialog(False)
+                self.status_bar.set_text(self.hint_text)
             else:
                 self.exit()
         elif key in ('a', 'A'):
             self.adding_music = True
             self.display_edit_dialog(True)
+            self.status_bar.set_text("Adding music")
         elif key in ('e', 'E'):
             self.editing_music = True
             self.editing_music_pos = self.music_list_view.get_cursor_position()
             data = self.music_list_view.get_music(self.editing_music_pos)
             self.display_edit_dialog(True, data)
+            self.status_bar.set_text("Editing music")
         elif key in ('d', 'D'):
             self.start_download()
 
@@ -213,16 +218,20 @@ class App(object):
     def display_edit_dialog(self, display, data = None):
         self.view.clear()
         if display:
+            self.music_list_view.set_height(self.terminal_rows - 5)
             if data is not None:
                 self.artist_edit.set_edit_text(data["artist"])
                 self.title_edit.set_edit_text(data["title"])
                 self.link_edit.set_edit_text(data["link"])
             self.view.append(urwid.Pile(self.item_editor + self.music_list_view.get_layout()))
         else:
+            self.music_list_view.set_height(self.terminal_rows - 1)
             self.artist_edit.set_edit_text("")
             self.title_edit.set_edit_text("")
             self.link_edit.set_edit_text("")
             self.view.append(urwid.Pile(self.music_list_view.get_layout()))
+
+        self.view.append(self.status_bar)
 
     def start_download(self):
         self.set_status("starting download......")
@@ -234,7 +243,7 @@ class App(object):
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': self.audio_format
             }],
-            'logger': DownloadLogger(), # avoid outputing to stdout
+            'logger': DownloadLogger(self),
             'progress_hooks': [self.progress_hook],
         }
 
@@ -247,14 +256,13 @@ class App(object):
                                                                   item["artist"],
                                                                   item["title"])
             self.set_status(status)
-            time.sleep(2)
             ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
             with youtube_dl.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([item["link"]])
 
+            time.sleep(3)
             self.ith_item += 1
 
-        time.sleep(1)
         self.set_status("download finished")
 
     def progress_hook(self, d):
@@ -277,6 +285,9 @@ class App(object):
     def set_status(self, status_text):
         self.status_bar.set_text(status_text)
         self.loop.draw_screen()
+
+    def log_error(self, msg):
+        self.set_status(msg)
 
     def exit(self):
         raise urwid.ExitMainLoop()
