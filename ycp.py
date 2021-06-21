@@ -86,18 +86,16 @@ class MusicList(urwid.ListBox):
 
 class MusicListView(object):
     signals = ['close']
-    def __init__(self, height):
+    def __init__(self, music_list_file, height):
         self.height = height
-        self.music_list_file = "ycp.json"
+        self.music_list_file = music_list_file
         self.HEADERS = ["Artist", "Title", "Link"]
         music_list = self.read_music_list()
         self.column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
 
-        self.selectable_rows = []
+        self.music_items = urwid.SimpleFocusListWalker([])
         for item in music_list["items"]:
-            row = SelectableRow([item["artist"], item["title"], item["link"]])
-            self.selectable_rows.append(row)
-        self.music_items = urwid.SimpleFocusListWalker(self.selectable_rows)
+            self.music_items.append(SelectableRow([item["artist"], item["title"], item["link"]]))
         self.music_list = MusicList(self.music_items)
 
         self.listview_container = urwid.BoxAdapter(self.music_list, self.height)
@@ -107,8 +105,7 @@ class MusicListView(object):
 
     def create_pop_up(self):
         pop_up = PopUpDialog()
-        urwid.connect_signal(pop_up, 'close',
-            lambda button: self.close_pop_up())
+        urwid.connect_signal(pop_up, 'close', lambda button: self.close_pop_up())
         return pop_up
 
     def add_music(self, artist, title, link):
@@ -116,14 +113,14 @@ class MusicListView(object):
 
     def edit_music(self, pos, artist, title, link):
         if pos >= 0:
-            row = self.selectable_rows[pos]
+            row = self.music_items[pos]
             row.update_data([artist, title, link])
 
     def get_music(self, pos):
-        return self.selectable_rows[pos].get_music_data()
+        return self.music_items[pos].get_music_data()
 
     def get_all_musics(self):
-        return [row.get_music_data() for row in self.selectable_rows]
+        return [row.get_music_data() for row in self.music_items]
 
     def get_pop_up_parameters(self):
         return {'left': 0, 'top': 1, 'overlay_width': 32, 'overlay_height': 7}
@@ -154,9 +151,11 @@ class App(object):
         # Get terminal size
         (self.terminal_cols, self.terminal_rows) = urwid.raw_display.Screen().get_cols_rows()
 
+        self.music_list_file = "ycp.json"
         self.audio_format = "mp3"
         self.adding_music = False
         self.editing_music = False
+        self.saving_music_list = False
 
         ######## edit dialog ########
         self.artist_edit = urwid.Edit(u"Artist: ", u"")
@@ -171,13 +170,13 @@ class App(object):
         self.item_editor.append(urwid.Columns([self.save_button, self.cancel_button]))
 
         ######## music list ########
-        self.music_list_view = MusicListView(self.terminal_rows - 1) # status bar occupies one row
+        self.music_list_view = MusicListView(self.music_list_file, self.terminal_rows - 1) # status bar occupies one row
         self.view = urwid.SimpleFocusListWalker([])
         self.view.append(urwid.Pile(self.music_list_view.get_layout()))
 
         ######## status bar ########
-        self.hint_text = "Q/ESC: Quit    A: add    E:edit music"
-        self.status_bar = urwid.Text(self.hint_text)
+        self.hint_text = "Q/ESC: Quit    A: Add    E:Edit music    S:Save to file"
+        self.status_bar = urwid.Edit(self.hint_text)
         self.view.append(self.status_bar)
 
         self.list = urwid.ListBox(self.view)
@@ -192,21 +191,40 @@ class App(object):
                 self.adding_music = False
                 self.editing_music = False
                 self.display_edit_dialog(False)
-                self.status_bar.set_text(self.hint_text)
+            elif self.saving_music_list:
+                self.view.set_focus(self.view.focus - 1)
+                self.saving_music_list = False
             else:
                 self.exit()
+
+            self.set_status(self.hint_text)
         elif key in ('a', 'A'):
             self.adding_music = True
             self.display_edit_dialog(True)
-            self.status_bar.set_text("Adding music")
+            self.status_bar.set_caption("Adding music")
         elif key in ('e', 'E'):
             self.editing_music = True
             self.editing_music_pos = self.music_list_view.get_cursor_position()
             data = self.music_list_view.get_music(self.editing_music_pos)
             self.display_edit_dialog(True, data)
-            self.status_bar.set_text("Editing music")
+            self.status_bar.set_caption("Editing music")
         elif key in ('d', 'D'):
             self.start_download()
+        elif key in ('s', 'S'):
+            self.saving_music_list = True
+            self.status_bar.set_caption("Save as: ")
+            self.status_bar.set_edit_text(self.music_list_file)
+            self.status_bar.set_edit_pos(len(self.music_list_file))
+            self.view.set_focus(self.view.focus + 1)
+        elif key in ('enter'):
+            if self.saving_music_list:
+                self.save_music_list(self.status_bar.get_edit_text())
+                self.handle_input('q')
+
+    def save_music_list(self, file_name):
+        items = self.music_list_view.get_all_musics()
+        with open(file_name, "w") as f:
+            json.dump({"items": items}, f, indent = 4)
 
     def save_music(self, artist, title, link):
         if self.adding_music:
@@ -282,8 +300,9 @@ class App(object):
                                                                   self.downloading_items[self.ith_item]["title"])
             self.set_status(status)
 
-    def set_status(self, status_text):
-        self.status_bar.set_text(status_text)
+    def set_status(self, caption, edit_text = ""):
+        self.status_bar.set_caption(caption)
+        self.status_bar.set_edit_text(edit_text)
         self.loop.draw_screen()
 
     def log_error(self, msg):
