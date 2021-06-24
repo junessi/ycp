@@ -2,6 +2,7 @@ import urwid
 import json
 import time
 import youtube_dl
+from youtube_dl.utils import DownloadError
 
 class DownloadLogger(object):
     def __init__(self, parent):
@@ -139,6 +140,11 @@ class MusicListView(object):
         (_, pos) = self.music_list.get_focus()
         return pos
 
+    def remove_item(self):
+        (_, pos) = self.music_list.get_focus()
+        if pos >= 0:
+            del self.music_items[pos]
+
 class App(object):
     def __init__(self):
         self.PALETTE = [
@@ -175,7 +181,7 @@ class App(object):
         self.view.append(urwid.Pile(self.music_list_view.get_layout()))
 
         ######## status bar ########
-        self.hint_text = "Q/ESC: Quit    A: Add    E:Edit music    S:Save to file"
+        self.hint_text = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
         self.status_bar = urwid.Edit(self.hint_text)
         self.view.append(self.status_bar)
 
@@ -216,7 +222,9 @@ class App(object):
             self.status_bar.set_edit_text(self.music_list_file)
             self.status_bar.set_edit_pos(len(self.music_list_file))
             self.view.set_focus(self.view.focus + 1)
-        elif key in ('enter'):
+        elif key in ('x', 'X'):
+            self.music_list_view.remove_item()
+        elif key == 'enter':
             if self.saving_music_list:
                 self.save_music_list(self.status_bar.get_edit_text())
                 self.handle_input('q')
@@ -275,10 +283,14 @@ class App(object):
                                                                   item["title"])
             self.set_status(status)
             ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
-            with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([item["link"]])
+            try:
+                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([item["link"]])
+                time.sleep(3)
+            except DownloadError as e:
+                status = "task {0}/{1} failed: {2}".format(self.ith_item + 1, self.num_items, str(e))
+                time.sleep(8) # hang to let user read what happened
 
-            time.sleep(3)
             self.ith_item += 1
 
         self.set_status("download finished")
