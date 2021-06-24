@@ -35,15 +35,6 @@ class SelectableRow(urwid.WidgetWrap):
         for t, (w, _) in zip(contents, self._columns.contents):
             w.set_text(t)
 
-    def keypress(self, size, key):
-        if self.on_select:
-            if key == 'enter':
-                self.on_select()
-            elif key in ('e', 'E'):
-                self.on_select()
-
-        return key
-
     def get_music_data(self):
         (artist_col, _) = self._columns.contents[0]
         (title_col, _)  = self._columns.contents[1]
@@ -62,8 +53,9 @@ class SelectableRow(urwid.WidgetWrap):
             link_col.set_text(data[2])
 
 class MusicList(urwid.ListBox):
-    def __init__(self, body, on_focus_change=None):
-        super().__init__(body)
+    def __init__(self, items, on_focus_change=None):
+        self.items = items
+        super().__init__(self.items)
 
         self.on_focus_change = on_focus_change
 
@@ -75,6 +67,8 @@ class MusicList(urwid.ListBox):
                              coming_from,
                              cursor_coords,
                              snap_rows)
+        if position == 3:
+            raise BaseException(str(position))
 
         # Implement a hook to be able to deposit additional logic
         if self.on_focus_change != None:
@@ -84,6 +78,16 @@ class MusicList(urwid.ListBox):
                                  coming_from,
                                  cursor_coords,
                                  snap_rows)
+
+    """
+    def keypress(self, size, key):
+        if key == 'down':
+            # if self.focus_position == 1:
+                # raise BaseException("position {0}".format(self.focus_position))
+            self.set_focus(self.focus_position + 1)
+
+        return key
+        """
 
 class MusicListView(object):
     signals = ['close']
@@ -98,8 +102,6 @@ class MusicListView(object):
         for item in music_list["items"]:
             self.music_items.append(SelectableRow([item["artist"], item["title"], item["link"]]))
         self.music_list = MusicList(self.music_items)
-
-        self.listview_container = urwid.BoxAdapter(self.music_list, self.height)
 
     def set_height(self, height):
         self.height = height
@@ -116,6 +118,9 @@ class MusicListView(object):
         if pos >= 0:
             row = self.music_items[pos]
             row.update_data([artist, title, link])
+
+    def get_item_count(self):
+        return len(self.music_items)
 
     def get_music(self, pos):
         return self.music_items[pos].get_music_data()
@@ -136,7 +141,7 @@ class MusicListView(object):
                 urwid.Divider(u'─'),
                 urwid.BoxAdapter(self.music_list, self.height - 3)]
 
-    def get_cursor_position(self):
+    def get_focus_position(self):
         (_, pos) = self.music_list.get_focus()
         return pos
 
@@ -186,7 +191,14 @@ class App(object):
         self.view.append(self.status_bar)
 
         self.list = urwid.ListBox(self.view)
-        self.loop = urwid.MainLoop(self.list, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
+        self.loop = urwid.MainLoop(self.list, self.PALETTE, input_filter = self.input_filter, unhandled_input = self.handle_input, pop_ups = True)
+
+    def input_filter(self, keys, raw):
+        if 'down' in keys:
+            if self.music_list_view.get_item_count() == (self.music_list_view.get_focus_position() + 1):
+                self.view.set_focus(self.view.focus)
+                return []
+        return keys
 
     def on_edit_item(self):
         self.handle_input('e')
@@ -210,7 +222,7 @@ class App(object):
             self.status_bar.set_caption("Adding music")
         elif key in ('e', 'E'):
             self.editing_music = True
-            self.editing_music_pos = self.music_list_view.get_cursor_position()
+            self.editing_music_pos = self.music_list_view.get_focus_position()
             data = self.music_list_view.get_music(self.editing_music_pos)
             self.display_edit_dialog(True, data)
             self.status_bar.set_caption("Editing music")
