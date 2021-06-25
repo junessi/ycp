@@ -17,7 +17,7 @@ class DownloadLogger(object):
     def error(self, msg):
         self.parent.log_error(msg)
 
-class SelectableRow(urwid.WidgetWrap):
+class MusicItem(urwid.WidgetWrap):
     def __init__(self, contents, on_select=None):
         self.contents = contents
         self.on_select = on_select
@@ -25,7 +25,7 @@ class SelectableRow(urwid.WidgetWrap):
         self._columns = urwid.Columns([urwid.Text(c) for c in contents])
         self._focusable_columns = urwid.AttrMap(self._columns, '', 'reveal_focus')
 
-        super(SelectableRow, self).__init__(self._focusable_columns)
+        super(MusicItem, self).__init__(self._focusable_columns)
 
     def selectable(self):
         return True
@@ -52,12 +52,11 @@ class SelectableRow(urwid.WidgetWrap):
             (link_col, _) = self._columns.contents[2]
             link_col.set_text(data[2])
 
+
 class MusicList(urwid.ListBox):
-    def __init__(self, items, on_focus_change=None):
+    def __init__(self, items):
         self.items = items
         super().__init__(self.items)
-
-        self.on_focus_change = on_focus_change
 
     # Overriden
     def change_focus(self, size, position, offset_inset=0, coming_from=None, cursor_coords=None, snap_rows=None):
@@ -67,29 +66,9 @@ class MusicList(urwid.ListBox):
                              coming_from,
                              cursor_coords,
                              snap_rows)
-        if position == 3:
-            raise BaseException(str(position))
 
-        # Implement a hook to be able to deposit additional logic
-        if self.on_focus_change != None:
-            self.on_focus_change(size,
-                                 position,
-                                 offset_inset,
-                                 coming_from,
-                                 cursor_coords,
-                                 snap_rows)
 
-    """
-    def keypress(self, size, key):
-        if key == 'down':
-            # if self.focus_position == 1:
-                # raise BaseException("position {0}".format(self.focus_position))
-            self.set_focus(self.focus_position + 1)
-
-        return key
-        """
-
-class MusicListView(object):
+class MusicListView(urwid.Frame):
     signals = ['close']
     def __init__(self, music_list_file, height):
         self.height = height
@@ -100,8 +79,10 @@ class MusicListView(object):
 
         self.music_items = urwid.SimpleFocusListWalker([])
         for item in music_list["items"]:
-            self.music_items.append(SelectableRow([item["artist"], item["title"], item["link"]]))
+            self.music_items.append(MusicItem([item["artist"], item["title"], item["link"]]))
         self.music_list = MusicList(self.music_items)
+
+        super().__init__(self.music_list)
 
     def set_height(self, height):
         self.height = height
@@ -112,7 +93,7 @@ class MusicListView(object):
         return pop_up
 
     def add_music(self, artist, title, link):
-        self.music_items.append(SelectableRow([artist, title, link]))
+        self.music_items.append(MusicItem([artist, title, link]))
 
     def edit_music(self, pos, artist, title, link):
         if pos >= 0:
@@ -191,7 +172,7 @@ class App(object):
         self.view.append(self.status_bar)
 
         self.list = urwid.ListBox(self.view)
-        self.loop = urwid.MainLoop(self.list, self.PALETTE, input_filter = self.input_filter, unhandled_input = self.handle_input, pop_ups = True)
+        self.loop = urwid.MainLoop(self.music_list_view, self.PALETTE, input_filter = self.input_filter, unhandled_input = self.handle_input, pop_ups = True)
 
     def input_filter(self, keys, raw):
         if 'down' in keys:
