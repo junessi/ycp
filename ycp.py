@@ -75,14 +75,19 @@ class MusicListView(urwid.Frame):
         self.music_list_file = music_list_file
         self.HEADERS = ["Artist", "Title", "Link"]
         music_list = self.read_music_list()
-        self.column_headers = urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers")
+        self.header = urwid.Pile([urwid.Divider('─'),
+                                  urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers"),
+                                  urwid.Divider('─')])
+
+        self.hint_text = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
+        self.footer = urwid.Edit(self.hint_text)
 
         self.music_items = urwid.SimpleFocusListWalker([])
         for item in music_list["items"]:
             self.music_items.append(MusicItem([item["artist"], item["title"], item["link"]]))
         self.music_list = MusicList(self.music_items)
 
-        super().__init__(self.music_list)
+        super().__init__(self.music_list, self.header, self.footer)
 
     def set_height(self, height):
         self.height = height
@@ -118,7 +123,7 @@ class MusicListView(urwid.Frame):
 
     def get_layout(self):
         return [urwid.Divider(u'─'),
-                self.column_headers,
+                self.header,
                 urwid.Divider(u'─'),
                 urwid.BoxAdapter(self.music_list, self.height - 3)]
 
@@ -130,6 +135,10 @@ class MusicListView(urwid.Frame):
         (_, pos) = self.music_list.get_focus()
         if pos >= 0:
             del self.music_items[pos]
+
+    def selectable(self):
+        return True
+
 
 class App(object):
     def __init__(self):
@@ -164,7 +173,7 @@ class App(object):
         ######## music list ########
         self.music_list_view = MusicListView(self.music_list_file, self.terminal_rows - 1) # status bar occupies one row
         self.view = urwid.SimpleFocusListWalker([])
-        self.view.append(urwid.Pile(self.music_list_view.get_layout()))
+        self.view.append(urwid.Pile([self.music_list_view]))
 
         ######## status bar ########
         self.hint_text = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
@@ -237,12 +246,12 @@ class App(object):
     def display_edit_dialog(self, display, data = None):
         self.view.clear()
         if display:
-            self.music_list_view.set_height(self.terminal_rows - 5)
+            self.music_list_view.set_height(self.terminal_rows - 4)
             if data is not None:
                 self.artist_edit.set_edit_text(data["artist"])
                 self.title_edit.set_edit_text(data["title"])
                 self.link_edit.set_edit_text(data["link"])
-            self.view.append(urwid.Pile(self.item_editor + self.music_list_view.get_layout()))
+            self.view.append(urwid.Pile([self.item_editor, self.music_list_view]))
         else:
             self.music_list_view.set_height(self.terminal_rows - 1)
             self.artist_edit.set_edit_text("")
