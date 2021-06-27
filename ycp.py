@@ -89,6 +89,19 @@ class MusicListView(urwid.Frame):
 
         super().__init__(self.music_list, self.header, self.footer)
 
+    def set_footer_text(self, caption, etext = "", pos = -1):
+        self.footer.set_caption(caption)
+        if len(etext):
+            self.footer.set_edit_text(etext)
+            self.footer.set_edit_pos(pos if pos >= 0 else len(etext))
+
+    def get_footer_text(self):
+        return self.footer.get_edit_text()
+
+    def reset_footer_text(self):
+        self.footer.set_caption(self.hint_text)
+        self.footer.set_edit_text("")
+
     def set_height(self, height):
         self.height = height
 
@@ -131,13 +144,14 @@ class MusicListView(urwid.Frame):
         (_, pos) = self.music_list.get_focus()
         return pos
 
+    def set_focus_position(self, pos):
+        if pos >= 0:
+            self.music_list.set_focus(pos)
+
     def remove_item(self):
         (_, pos) = self.music_list.get_focus()
         if pos >= 0:
             del self.music_items[pos]
-
-    def selectable(self):
-        return True
 
 
 class App(object):
@@ -157,38 +171,47 @@ class App(object):
         self.adding_music = False
         self.editing_music = False
         self.saving_music_list = False
+        self.item_editor_height = 4
 
-        ######## edit dialog ########
-        self.artist_edit = urwid.Edit(u"Artist: ", u"")
-        self.title_edit = urwid.Edit(u"Title: ", u"")
-        self.link_edit = urwid.Edit(u"Link: ", u"")
-        self.item_editor = [self.artist_edit, self.title_edit, self.link_edit]
-        self.save_button = urwid.Button(u"Save", lambda button : self.save_music(self.artist_edit.get_edit_text(),
-                                                                                 self.title_edit.get_edit_text(),
-                                                                                 self.link_edit.get_edit_text()
-                                                                                 ))
-        self.cancel_button = urwid.Button(u"Cancel", lambda button : self.handle_input('q'))
-        self.item_editor.append(urwid.Columns([self.save_button, self.cancel_button]))
+        self.create_edit_dialog()
+        self.create_music_list_view()
 
-        ######## music list ########
-        self.music_list_view = MusicListView(self.music_list_file, self.terminal_rows - 1) # status bar occupies one row
-        self.view = urwid.SimpleFocusListWalker([])
-        self.view.append(urwid.Pile([self.music_list_view]))
+        self.main_view = urwid.Pile([('weight', self.terminal_rows - self.item_editor_height, self.music_list_view)])
+        self.loop = urwid.MainLoop(self.main_view, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
 
-        ######## status bar ########
-        self.hint_text = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
-        self.status_bar = urwid.Edit(self.hint_text)
-        self.view.append(self.status_bar)
-
-        self.list = urwid.ListBox(self.view)
-        self.loop = urwid.MainLoop(self.music_list_view, self.PALETTE, input_filter = self.input_filter, unhandled_input = self.handle_input, pop_ups = True)
-
+    """
     def input_filter(self, keys, raw):
         if 'down' in keys:
             if self.music_list_view.get_item_count() == (self.music_list_view.get_focus_position() + 1):
-                self.view.set_focus(self.view.focus)
-                return []
+                self.music_list_view.set_focus_position(self.music_list_view.get_focus_position())
         return keys
+        """
+
+    def refresh_main_view(self, display_item_editor = False, data = None):
+        self.main_view.contents.clear()
+        if display_item_editor:
+            self.main_view.contents.append((self.item_editor, ('weight', self.item_editor_height)))
+            if data is not None:
+                self.artist_edit.set_edit_text(data["artist"])
+                self.title_edit.set_edit_text(data["title"])
+                self.link_edit.set_edit_text(data["link"])
+        self.main_view.contents.append((self.music_list_view, ('weight', self.terminal_rows - self.item_editor_height)))
+
+    def create_edit_dialog(self):
+        self.artist_edit = urwid.Edit(u"Artist: ", u"")
+        self.title_edit = urwid.Edit(u"Title: ", u"")
+        self.link_edit = urwid.Edit(u"Link: ", u"")
+        save_button = urwid.Button(u"Save", lambda button : self.save_music(self.artist_edit.get_edit_text(),
+                                                                            self.title_edit.get_edit_text(),
+                                                                            self.link_edit.get_edit_text()))
+        cancel_button = urwid.Button(u"Cancel", lambda button : self.handle_input('q'))
+        self.item_editor = urwid.ListBox(urwid.SimpleFocusListWalker([self.artist_edit,
+                                                                      self.title_edit,
+                                                                      self.link_edit,
+                                                                      urwid.Columns([save_button, cancel_button])]))
+
+    def create_music_list_view(self):
+        self.music_list_view = MusicListView(self.music_list_file, self.terminal_rows - 1) # status bar occupies one row
 
     def on_edit_item(self):
         self.handle_input('e')
@@ -198,37 +221,34 @@ class App(object):
             if self.adding_music or self.editing_music:
                 self.adding_music = False
                 self.editing_music = False
-                self.display_edit_dialog(False)
+                self.refresh_main_view()
             elif self.saving_music_list:
-                self.view.set_focus(self.view.focus - 1)
+                self.music_list_view.set_focus('body')
                 self.saving_music_list = False
             else:
                 self.exit()
 
-            self.set_status(self.hint_text)
+            self.reset_status()
         elif key in ('a', 'A'):
             self.adding_music = True
-            self.display_edit_dialog(True)
-            self.status_bar.set_caption("Adding music")
+            self.refresh_main_view(True)
+            self.set_status("Adding music")
         elif key in ('e', 'E'):
             self.editing_music = True
             self.editing_music_pos = self.music_list_view.get_focus_position()
             data = self.music_list_view.get_music(self.editing_music_pos)
-            self.display_edit_dialog(True, data)
-            self.status_bar.set_caption("Editing music")
+            self.refresh_main_view(True, data)
+            self.set_status("Editing music")
         elif key in ('d', 'D'):
             self.start_download()
         elif key in ('s', 'S'):
             self.saving_music_list = True
-            self.status_bar.set_caption("Save as: ")
-            self.status_bar.set_edit_text(self.music_list_file)
-            self.status_bar.set_edit_pos(len(self.music_list_file))
-            self.view.set_focus(self.view.focus + 1)
+            self.edit_save_file_name()
         elif key in ('x', 'X'):
             self.music_list_view.remove_item()
         elif key == 'enter':
             if self.saving_music_list:
-                self.save_music_list(self.status_bar.get_edit_text())
+                self.save_music_list(self.music_list_view.get_footer_text())
                 self.handle_input('q')
 
     def save_music_list(self, file_name):
@@ -242,24 +262,6 @@ class App(object):
         elif self.editing_music:
             self.music_list_view.edit_music(self.editing_music_pos, artist, title, link)
         self.handle_input('q')
-
-    def display_edit_dialog(self, display, data = None):
-        self.view.clear()
-        if display:
-            self.music_list_view.set_height(self.terminal_rows - 4)
-            if data is not None:
-                self.artist_edit.set_edit_text(data["artist"])
-                self.title_edit.set_edit_text(data["title"])
-                self.link_edit.set_edit_text(data["link"])
-            self.view.append(urwid.Pile([self.item_editor, self.music_list_view]))
-        else:
-            self.music_list_view.set_height(self.terminal_rows - 1)
-            self.artist_edit.set_edit_text("")
-            self.title_edit.set_edit_text("")
-            self.link_edit.set_edit_text("")
-            self.view.append(urwid.Pile(self.music_list_view.get_layout()))
-
-        self.view.append(self.status_bar)
 
     def start_download(self):
         self.set_status("starting download......")
@@ -314,10 +316,15 @@ class App(object):
                                                                   self.downloading_items[self.ith_item]["title"])
             self.set_status(status)
 
-    def set_status(self, caption, edit_text = ""):
-        self.status_bar.set_caption(caption)
-        self.status_bar.set_edit_text(edit_text)
-        self.loop.draw_screen()
+    def set_status(self, caption):
+        self.music_list_view.set_footer_text(caption)
+
+    def reset_status(self):
+        self.music_list_view.reset_footer_text()
+
+    def edit_save_file_name(self):
+        self.music_list_view.set_footer_text("Save as: ", self.music_list_file)
+        self.music_list_view.set_focus('footer')
 
     def log_error(self, msg):
         self.set_status(msg)
