@@ -58,15 +58,6 @@ class MusicList(urwid.ListBox):
         self.items = items
         super().__init__(self.items)
 
-    # Overriden
-    def change_focus(self, size, position, offset_inset=0, coming_from=None, cursor_coords=None, snap_rows=None):
-        super().change_focus(size,
-                             position,
-                             offset_inset,
-                             coming_from,
-                             cursor_coords,
-                             snap_rows)
-
 
 class MusicListView(urwid.Frame):
     signals = ['close']
@@ -293,11 +284,14 @@ class App(object):
                 time.sleep(3)
             except DownloadError as e:
                 status = "task {0}/{1} failed: {2}".format(self.ith_item + 1, self.num_items, str(e))
+                self.set_status(status)
                 time.sleep(8) # hang to let user read what happened
 
             self.ith_item += 1
 
         self.set_status("download finished")
+        time.sleep(2)
+        self.reset_status()
 
     def progress_hook(self, d):
         if d['status'] == 'finished':
@@ -318,6 +312,7 @@ class App(object):
 
     def set_status(self, caption):
         self.music_list_view.set_footer_text(caption)
+        self.loop.draw_screen()
 
     def reset_status(self):
         self.music_list_view.reset_footer_text()
