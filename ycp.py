@@ -105,9 +105,8 @@ class MusicListView(urwid.Frame):
         self.music_items.append(MusicItem([artist, title, link]))
 
     def edit_music(self, pos, artist, title, link):
-        if pos >= 0:
-            row = self.music_items[pos]
-            row.update_data([artist, title, link])
+        if pos >= 0 and pos < len(self.music_items):
+            self.music_items[pos].update_data([artist, title, link])
 
     def get_item_count(self):
         return len(self.music_items)
@@ -169,14 +168,6 @@ class App(object):
 
         self.main_view = urwid.Pile([('weight', self.terminal_rows - self.item_editor_height, self.music_list_view)])
         self.loop = urwid.MainLoop(self.main_view, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
-
-    """
-    def input_filter(self, keys, raw):
-        if 'down' in keys:
-            if self.music_list_view.get_item_count() == (self.music_list_view.get_focus_position() + 1):
-                self.music_list_view.set_focus_position(self.music_list_view.get_focus_position())
-        return keys
-        """
 
     def refresh_main_view(self, display_item_editor = False, data = None):
         self.main_view.contents.clear()
