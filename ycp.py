@@ -2,6 +2,7 @@ import urwid
 import json
 import time
 import youtube_dl
+import argparse
 from youtube_dl.utils import DownloadError
 
 class DownloadLogger(object):
@@ -144,8 +145,63 @@ class MusicListView(urwid.Frame):
             del self.music_items[pos]
 
 
+class Downloader(object):
+    def __init__(self, items, status_callback):
+        """
+        Parameters:
+        item (list): A list contains items to download.
+        status_callback (function): A function is called when a status is triggered.
+                                    status: started, downloading, downloaded, finished, error.
+        """
+
+        self.downloading_items = items
+        self.status_callback = status_callback
+        self.audio_format = 'mp3'
+        self.downloading_item = None
+
+    def start(self):
+        self.status_callback_hook({'status': 'started'})
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': self.audio_format
+            }],
+            'logger': DownloadLogger(self),
+            'progress_hooks': [self.status_callback_hook],
+        }
+
+        self.downloading_item_index = 0
+        self.downloading_items_count = len(self.downloading_items)
+        for item in self.downloading_items:
+            self.downloading_item = item
+            ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
+            try:
+                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([item["link"]])
+            except DownloadError as e:
+                self.status_callback_hook({'status': 'error'})
+
+            self.downloading_item_index += 1
+
+    def status_callback_hook(self, data):
+        if self.downloading_item:
+            data['artist']          = self.downloading_item['artist']
+            data['title']           = self.downloading_item['title']
+            data['link']            = self.downloading_item['link']
+            data['audio_format']    = self.audio_format
+            data['index'] = self.downloading_item_index
+            data['count'] = self.downloading_items_count
+
+        self.status_callback(data)
+
+    def log_error(self, msg):
+        self.status_callback_hook({'error_msg': msg})
+
+
 class App(object):
-    def __init__(self):
+    def __init__(self, music_list_file = None):
         self.PALETTE = [
             ("column_headers", "white, bold", ""),
             ("notifier_active",   "dark cyan",  "light gray"),
@@ -156,7 +212,7 @@ class App(object):
         # Get terminal size
         (self.terminal_cols, self.terminal_rows) = urwid.raw_display.Screen().get_cols_rows()
 
-        self.music_list_file = "ycp.json"
+        self.music_list_file = "ycp.json" if music_list_file is None else music_list_file
         self.audio_format = "mp3"
         self.adding_music = False
         self.editing_music = False
@@ -246,60 +302,43 @@ class App(object):
         self.handle_input('q')
 
     def start_download(self):
-        self.set_status("starting download......")
-        time.sleep(1)
+        d = Downloader(self.music_list_view.get_all_musics(), self.progress_hook)
+        d.start()
 
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': self.audio_format
-            }],
-            'logger': DownloadLogger(self),
-            'progress_hooks': [self.progress_hook],
-        }
+    def progress_hook(self, data):
+        if data['status'] == 'started':
+            self.set_status("preparing download......")
+            time.sleep(1)
 
-        self.ith_item = 0
-        self.downloading_items = self.music_list_view.get_all_musics()
-        self.num_items = len(self.downloading_items)
-        for item in self.downloading_items:
-            status = "task {0}/{1}: downloading {2} - {3}".format(self.ith_item + 1,
-                                                                  self.num_items,
-                                                                  item["artist"],
-                                                                  item["title"])
+        elif data['status'] == 'downloading':
+            status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
+                                                                                       data['count'],
+                                                                                       data['_percent_str'],
+                                                                                       data['artist'],
+                                                                                       data['title'],
+                                                                                       data['audio_format'],
+                                                                                       data['_speed_str'])
             self.set_status(status)
-            ydl_opts["outtmpl"] = "{0} - {1}.%(ext)s".format(item["artist"], item["title"], self.audio_format)
-            try:
-                with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([item["link"]])
-                time.sleep(3)
-            except DownloadError as e:
-                status = "task {0}/{1} failed: {2}".format(self.ith_item + 1, self.num_items, str(e))
-                self.set_status(status)
-                time.sleep(8) # hang to let user read what happened
-
-            self.ith_item += 1
-
-        self.set_status("download finished")
-        time.sleep(2)
-        self.reset_status()
-
-    def progress_hook(self, d):
-        if d['status'] == 'finished':
-            status = "task {0}/{1}: {2}".format(self.ith_item, self.num_items, d["filename"])
+        elif data['status'] == 'error':
+            status = "task {0}/{1} failed: {2}".format(data['index'] + 1, data['count'], str(e))
             self.set_status(status)
-            status = "task {0}/{1}: converting to {2} - {3}.{4}".format(self.ith_item + 1,
-                                                                        self.num_items,
-                                                                        self.downloading_items[self.ith_item]["artist"],
-                                                                        self.downloading_items[self.ith_item]["title"],
-                                                                        self.audio_format)
+            time.sleep(8) # hang to let user read what happened
+
+        elif data['status'] == 'finished':
+            status = "task {0}/{1}: {2} downloaded".format(data['index'], data['count'], data["filename"])
             self.set_status(status)
-        elif d['status'] == 'downloading':
-            status = "task {0}/{1}: downloading {2} - {3}".format(self.ith_item + 1,
-                                                                  self.num_items,
-                                                                  self.downloading_items[self.ith_item]["artist"],
-                                                                  self.downloading_items[self.ith_item]["title"])
+            status = "task {0}/{1}: converting to {2} - {3}.{4}".format(data['index'] + 1,
+                                                                        data['count'],
+                                                                        data['artist'],
+                                                                        data['title'],
+                                                                        data['audio_format'])
             self.set_status(status)
+
+            if (data['index'] + 1) == data['count']:
+                self.set_status("All tasks are finished.")
+                time.sleep(2)
+                self.reset_status()
+
 
     def set_status(self, caption):
         self.music_list_view.set_footer_text(caption)
@@ -312,14 +351,47 @@ class App(object):
         self.music_list_view.set_footer_text("Save as: ", self.music_list_file)
         self.music_list_view.set_focus('footer')
 
-    def log_error(self, msg):
-        self.set_status(msg)
-
     def exit(self):
         raise urwid.ExitMainLoop()
 
     def run(self):
         self.loop.run()
 
+
+def progress_hook(data):
+    if data['status'] == 'started':
+        print("preparing download......")
+
+    elif data['status'] == 'downloading':
+        status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
+                                                                                   data['count'],
+                                                                                   data['_percent_str'],
+                                                                                   data['artist'],
+                                                                                   data['title'],
+                                                                                   data['audio_format'],
+                                                                                   data['_speed_str'])
+        print(status)
+    elif data['status'] == 'error':
+        print("error occured: {0}".format(data['error_msg']))
+
+    elif data['status'] == 'finished':
+        print("finished")
+
+
+def start_download(file_name):
+    f = open(file_name, "r")
+    data = json.load(f)
+    d = Downloader(data['items'], progress_hook)
+    d.start()
+    
+
 if __name__ == '__main__':
-    App().run()
+    ap = argparse.ArgumentParser(description = 'Download youtube videos as audios')
+    ap.add_argument('-f', dest = 'jsonpath', action = 'store')
+    ap.add_argument('-d', dest = 'download_directly', action = 'store_true')
+    args = ap.parse_args()
+
+    if args.download_directly:
+        start_download(args.jsonpath)
+    else:
+        App(args.jsonpath).run()
