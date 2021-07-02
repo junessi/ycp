@@ -3,7 +3,24 @@ import json
 import time
 import youtube_dl
 import argparse
+import os.path
+import sys
 from youtube_dl.utils import DownloadError
+
+class YCPConfig(object):
+    def __init__(self, path):
+        if os.path.isfile(path) is False:
+            raise Exception("{0} does not exist.".format(path))
+
+        self.path = path
+
+    def get(self):
+        f = open(self.path, "r")
+        config = json.load(f)
+        config["path"] = self.path
+
+        return config
+
 
 class DownloadLogger(object):
     def __init__(self, parent):
@@ -62,22 +79,24 @@ class MusicList(urwid.ListBox):
 
 class MusicListView(urwid.Frame):
     signals = ['close']
-    def __init__(self, music_list_file, height):
+    def __init__(self, items, height):
         self.height = height
-        self.music_list_file = music_list_file
+
+        # frame header
         self.HEADERS = ["Artist", "Title", "Link"]
-        music_list = self.read_music_list()
         self.header = urwid.Pile([urwid.Divider('─'),
                                   urwid.AttrMap(urwid.Columns([urwid.Text(c) for c in self.HEADERS]), "column_headers"),
                                   urwid.Divider('─')])
 
-        self.hint_text = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
-        self.footer = urwid.Edit(self.hint_text)
+        # frame body
+        self.list_items = urwid.SimpleFocusListWalker([])
+        for item in items:
+            self.list_items.append(MusicItem([item["artist"], item["title"], item["link"]]))
+        self.music_list = MusicList(self.list_items)
 
-        self.music_items = urwid.SimpleFocusListWalker([])
-        for item in music_list["items"]:
-            self.music_items.append(MusicItem([item["artist"], item["title"], item["link"]]))
-        self.music_list = MusicList(self.music_items)
+        # frame footer
+        self.HINT_TEXT = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
+        self.footer = urwid.Edit(self.HINT_TEXT)
 
         super().__init__(self.music_list, self.header, self.footer)
 
@@ -91,7 +110,7 @@ class MusicListView(urwid.Frame):
         return self.footer.get_edit_text()
 
     def reset_footer_text(self):
-        self.footer.set_caption(self.hint_text)
+        self.footer.set_caption(self.HINT_TEXT)
         self.footer.set_edit_text("")
 
     def set_height(self, height):
@@ -103,27 +122,23 @@ class MusicListView(urwid.Frame):
         return pop_up
 
     def add_music(self, artist, title, link):
-        self.music_items.append(MusicItem([artist, title, link]))
+        self.list_items.append(MusicItem([artist, title, link]))
 
     def edit_music(self, pos, artist, title, link):
-        if pos >= 0 and pos < len(self.music_items):
-            self.music_items[pos].update_data([artist, title, link])
+        if pos >= 0 and pos < len(self.list_items):
+            self.list_items[pos].update_data([artist, title, link])
 
     def get_item_count(self):
-        return len(self.music_items)
+        return len(self.list_items)
 
     def get_music(self, pos):
-        return self.music_items[pos].get_music_data()
+        return self.list_items[pos].get_music_data()
 
     def get_all_musics(self):
-        return [row.get_music_data() for row in self.music_items]
+        return [row.get_music_data() for row in self.list_items]
 
     def get_pop_up_parameters(self):
         return {'left': 0, 'top': 1, 'overlay_width': 32, 'overlay_height': 7}
-
-    def read_music_list(self):
-        f = open(self.music_list_file, "r")
-        return json.load(f)
 
     def get_layout(self):
         return [urwid.Divider(u'─'),
@@ -142,7 +157,7 @@ class MusicListView(urwid.Frame):
     def remove_item(self):
         (_, pos) = self.music_list.get_focus()
         if pos >= 0:
-            del self.music_items[pos]
+            del self.list_items[pos]
 
 
 class Downloader(object):
@@ -200,8 +215,8 @@ class Downloader(object):
         self.status_callback_hook({'error_msg': msg})
 
 
-class App(object):
-    def __init__(self, music_list_file = None):
+class TUIApp(object):
+    def __init__(self, config):
         self.PALETTE = [
             ("column_headers", "white, bold", ""),
             ("notifier_active",   "dark cyan",  "light gray"),
@@ -212,7 +227,7 @@ class App(object):
         # Get terminal size
         (self.terminal_cols, self.terminal_rows) = urwid.raw_display.Screen().get_cols_rows()
 
-        self.music_list_file = "ycp.json" if music_list_file is None else music_list_file
+        self.config = config
         self.audio_format = "mp3"
         self.adding_music = False
         self.editing_music = False
@@ -249,7 +264,10 @@ class App(object):
                                                                       urwid.Columns([save_button, cancel_button])]))
 
     def create_music_list_view(self):
-        self.music_list_view = MusicListView(self.music_list_file, self.terminal_rows - 1) # status bar occupies one row
+        items = []
+        if "items" in self.config:
+            items = self.config["items"]
+        self.music_list_view = MusicListView(items, self.terminal_rows - 1) # status bar occupies one row
 
     def on_edit_item(self):
         self.handle_input('e')
@@ -327,6 +345,7 @@ class App(object):
         elif data['status'] == 'finished':
             status = "task {0}/{1}: {2} downloaded".format(data['index'], data['count'], data["filename"])
             self.set_status(status)
+            time.sleep(1)
             status = "task {0}/{1}: converting to {2} - {3}.{4}".format(data['index'] + 1,
                                                                         data['count'],
                                                                         data['artist'],
@@ -348,7 +367,7 @@ class App(object):
         self.music_list_view.reset_footer_text()
 
     def edit_save_file_name(self):
-        self.music_list_view.set_footer_text("Save as: ", self.music_list_file)
+        self.music_list_view.set_footer_text("Save as: ", self.config["path"])
         self.music_list_view.set_focus('footer')
 
     def exit(self):
@@ -358,40 +377,46 @@ class App(object):
         self.loop.run()
 
 
-def progress_hook(data):
-    if data['status'] == 'started':
-        print("preparing download......")
+class TerminalDownloader(object):
+    def __init__(self, config):
+        self.config = config
 
-    elif data['status'] == 'downloading':
-        status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
-                                                                                   data['count'],
-                                                                                   data['_percent_str'],
-                                                                                   data['artist'],
-                                                                                   data['title'],
-                                                                                   data['audio_format'],
-                                                                                   data['_speed_str'])
-        print(status)
-    elif data['status'] == 'error':
-        print("error occured: {0}".format(data['error_msg']))
+    def progress_hook(self, data):
+        if data['status'] == 'started':
+            print("preparing download......")
 
-    elif data['status'] == 'finished':
-        print("finished")
+        elif data['status'] == 'downloading':
+            status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
+                                                                                       data['count'],
+                                                                                       data['_percent_str'],
+                                                                                       data['artist'],
+                                                                                       data['title'],
+                                                                                       data['audio_format'],
+                                                                                       data['_speed_str'])
+            sys.stdout.write("\r")
+            sys.stdout.write(status)
+            sys.stdout.flush()
+        elif data['status'] == 'error':
+            print("error occured: {0}".format(data['error_msg']))
+
+        elif data['status'] == 'finished':
+            print("")
 
 
-def start_download(file_name):
-    f = open(file_name, "r")
-    data = json.load(f)
-    d = Downloader(data['items'], progress_hook)
-    d.start()
+    def start(self):
+        d = Downloader(config['items'], self.progress_hook)
+        d.start()
     
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description = 'Download youtube videos as audios')
-    ap.add_argument('-f', dest = 'jsonpath', action = 'store')
+    ap.add_argument('-f', dest = 'configpath', action = 'store', default = 'ycp.json')
     ap.add_argument('-d', dest = 'download_directly', action = 'store_true')
     args = ap.parse_args()
 
+    config = YCPConfig(args.configpath).get()
+
     if args.download_directly:
-        start_download(args.jsonpath)
+        TerminalDownloader(config).start()
     else:
-        App(args.jsonpath).run()
+        TUIApp(config).run()
