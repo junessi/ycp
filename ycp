@@ -384,25 +384,28 @@ class TerminalDownloader(object):
         self.config = config
 
     def progress_hook(self, data):
-        if data['status'] == 'started':
-            print("preparing download......")
+        if 'error_msg' in data:
+            print("Error: {0}".format(data['error_msg']))
+        elif 'status' in data:
+            if data['status'] == 'started':
+                print("preparing download......")
 
-        elif data['status'] == 'downloading':
-            status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
-                                                                                       data['count'],
-                                                                                       data['_percent_str'],
-                                                                                       data['artist'],
-                                                                                       data['title'],
-                                                                                       data['audio_format'],
-                                                                                       data['_speed_str'])
-            sys.stdout.write("\r")
-            sys.stdout.write(status)
-            sys.stdout.flush()
-        elif data['status'] == 'error':
-            print("error occured: {0}".format(data['error_msg']))
+            elif data['status'] == 'downloading':
+                status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
+                                                                                           data['count'],
+                                                                                           data['_percent_str'],
+                                                                                           data['artist'],
+                                                                                           data['title'],
+                                                                                           data['audio_format'],
+                                                                                           data['_speed_str'])
+                sys.stdout.write("\r")
+                sys.stdout.write(status)
+                sys.stdout.flush()
+            elif data['status'] == 'error':
+                print("error occured: {0}".format(data['error_msg']))
 
-        elif data['status'] == 'finished':
-            print("")
+            elif data['status'] == 'finished':
+                print("")
 
 
     def start(self):
