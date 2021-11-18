@@ -289,7 +289,7 @@ class TUIApp(object):
             self.reset_status()
         elif key in ('a', 'A'):
             self.adding_music = True
-            self.refresh_main_view(True)
+            self.refresh_main_view(True, {'artist': '', 'title': '', 'link': ''})
             self.set_status("Adding music")
         elif key in ('e', 'E'):
             self.editing_music = True
