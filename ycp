@@ -41,6 +41,7 @@ class MusicItem(urwid.WidgetWrap):
     def __init__(self, contents, on_select=None):
         self.contents = contents
         self.on_select = on_select
+        self.downloaded = False
 
         self._columns = urwid.Columns([urwid.Text(c) for c in contents])
         self._focusable_columns = urwid.AttrMap(self._columns, '', 'reveal_focus')
@@ -56,9 +57,10 @@ class MusicItem(urwid.WidgetWrap):
             w.set_text(t)
 
     def get_music_data(self):
-        (artist_col, _) = self._columns.contents[0]
+        (artist_col, _) = self._columns.contents[0] # return (widget, options)
         (title_col, _)  = self._columns.contents[1]
         (link_col, _)   = self._columns.contents[2]
+
         return {"artist": artist_col.text,
                 "title":  title_col.text,
                 "link":   link_col.text}
@@ -72,11 +74,29 @@ class MusicItem(urwid.WidgetWrap):
             (link_col, _) = self._columns.contents[2]
             link_col.set_text(data[2])
 
+    def is_downloaded(self, detect_file = False):
+        if detect_file:
+            (artist_col, _) = self._columns.contents[0]
+            (title_col, _)  = self._columns.contents[1]
+            filename = "{0} - {1}.mp3".format(artist_col.text, title_col.text)
+            self.downloaded = os.path.isfile(filename)
+
+        return self.downloaded
+
+    def checkfile(self):
+        if self.is_downloaded(True):
+            self._focusable_columns.set_attr_map({None: 'item_downloaded'})
+        else:
+            self._focusable_columns.set_attr_map({None: 'item_not_downloaded'})
+
 
 class MusicList(urwid.ListBox):
     def __init__(self, items):
         self.items = items
         super().__init__(self.items)
+
+    def get_items(self):
+        return self.items
 
 
 class MusicListView(urwid.Frame):
@@ -95,6 +115,7 @@ class MusicListView(urwid.Frame):
         for item in items:
             self.list_items.append(MusicItem([item["artist"], item["title"], item["link"]]))
         self.music_list = MusicList(self.list_items)
+        self.check_downloaded_items()
 
         # frame footer
         self.HINT_TEXT = "Q/ESC: Quit    A: Add    E: Edit    X: Remove    D: Download    S: Save to file"
@@ -121,14 +142,17 @@ class MusicListView(urwid.Frame):
     def create_pop_up(self):
         pop_up = PopUpDialog()
         urwid.connect_signal(pop_up, 'close', lambda button: self.close_pop_up())
+
         return pop_up
 
     def add_music(self, artist, title, link):
         self.list_items.append(MusicItem([artist, title, link]))
+        self.list_items[-1].checkfile()
 
     def edit_music(self, pos, artist, title, link):
         if pos >= 0 and pos < len(self.list_items):
             self.list_items[pos].update_data([artist, title, link])
+            self.list_items[pos].checkfile()
 
     def get_item_count(self):
         return len(self.list_items)
@@ -138,6 +162,12 @@ class MusicListView(urwid.Frame):
 
     def get_all_musics(self):
         return [row.get_music_data() for row in self.list_items]
+
+    def get_selected_item(self):
+        return self.list_items[self.get_focus_position()].get_music_data()
+
+    def get_new_items(self):
+        return [row.get_music_data() for row in self.list_items if row.is_downloaded() == False]
 
     def get_pop_up_parameters(self):
         return {'left': 0, 'top': 1, 'overlay_width': 32, 'overlay_height': 7}
@@ -160,6 +190,10 @@ class MusicListView(urwid.Frame):
         (_, pos) = self.music_list.get_focus()
         if pos >= 0:
             del self.list_items[pos]
+
+    def check_downloaded_items(self):
+        for item in self.music_list.get_items():
+            item.checkfile()
 
 
 class Downloader(object):
@@ -220,10 +254,12 @@ class Downloader(object):
 class TUIApp(object):
     def __init__(self, config):
         self.PALETTE = [
-            ("column_headers", "white, bold", ""),
-            ("notifier_active",   "dark cyan",  "light gray"),
-            ("notifier_inactive", "black", "dark gray"),
-            ("reveal_focus",      "black",      "dark cyan", "standout")
+            ("column_headers",      "white, bold",      ""),
+            ("notifier_active",     "dark cyan",        "light gray"),
+            ("notifier_inactive",   "black",            "dark gray"),
+            ("reveal_focus",        "black",            "dark cyan", "standout"),
+            ("item_downloaded",     "light green",      ""),
+            ("item_not_downloaded", "light red",        "")
         ]
 
         # Get terminal size
@@ -234,6 +270,7 @@ class TUIApp(object):
         self.adding_music = False
         self.editing_music = False
         self.saving_music_list = False
+        self.selecting_download_option = False
         self.item_editor_height = 4
 
         self.create_edit_dialog()
@@ -276,9 +313,10 @@ class TUIApp(object):
 
     def handle_input(self, key):
         if key in ('q', 'Q', 'esc'):
-            if self.adding_music or self.editing_music:
+            if self.adding_music or self.editing_music or self.selecting_download_option:
                 self.adding_music = False
                 self.editing_music = False
+                self.selecting_download_option = False
                 self.refresh_main_view()
             elif self.saving_music_list:
                 self.music_list_view.set_focus('body')
@@ -288,20 +326,31 @@ class TUIApp(object):
 
             self.reset_status()
         elif key in ('a', 'A'):
-            self.adding_music = True
-            self.refresh_main_view(True, {'artist': '', 'title': '', 'link': ''})
-            self.set_status("Adding music")
+            if self.selecting_download_option:
+                self.start_download_all()
+            elif self.adding_music == False:
+                self.adding_music = True
+                self.refresh_main_view(True, {'artist': '', 'title': '', 'link': ''})
+                self.set_status("Adding music")
         elif key in ('e', 'E'):
-            self.editing_music = True
-            self.editing_music_pos = self.music_list_view.get_focus_position()
-            data = self.music_list_view.get_music(self.editing_music_pos)
-            self.refresh_main_view(True, data)
-            self.set_status("Editing music")
+            if self.editing_music == False:
+                self.editing_music = True
+                self.editing_music_pos = self.music_list_view.get_focus_position()
+                data = self.music_list_view.get_music(self.editing_music_pos)
+                self.refresh_main_view(True, data)
+                self.set_status("Editing music")
         elif key in ('d', 'D'):
-            self.start_download()
+            self.selecting_download_option = True
+            self.set_status("Download> A: All    S: Selected item    N: New items    ESC: Cancel")
+        elif key in ('n', 'N'):
+            if self.selecting_download_option:
+                self.start_download_new_items()
         elif key in ('s', 'S'):
-            self.saving_music_list = True
-            self.edit_save_file_name()
+            if self.selecting_download_option:
+                self.start_download_selected_item()
+            elif self.saving_music_list == False:
+                self.saving_music_list = True
+                self.edit_save_file_name()
         elif key in ('x', 'X'):
             self.music_list_view.remove_item()
         elif key == 'enter':
@@ -321,44 +370,66 @@ class TUIApp(object):
             self.music_list_view.edit_music(self.editing_music_pos, artist, title, link)
         self.handle_input('q')
 
-    def start_download(self):
-        d = Downloader(self.music_list_view.get_all_musics(), self.progress_hook)
-        d.start()
+    def start_download(self, items_to_download):
+        self.selecting_download_option = False
+        Downloader(items_to_download, self.progress_hook).start()
+
+    def start_download_all(self):
+        self.start_download(self.music_list_view.get_all_musics())
+
+    def start_download_selected_item(self):
+        self.start_download([self.music_list_view.get_selected_item()])
+
+    def start_download_new_items(self):
+        self.start_download(self.music_list_view.get_new_items())
 
     def progress_hook(self, data):
-        if data['status'] == 'started':
-            self.set_status("preparing download......")
-            time.sleep(1)
+        if 'error_msg' in data:
+            self.set_status(data['error_msg'])
+            time.sleep(8) # hang to let user see what happened
+        elif 'status' in data:
+            if data['status'] == 'started':
+                self.set_status("preparing download......")
+                time.sleep(1)
 
-        elif data['status'] == 'downloading':
-            status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
-                                                                                       data['count'],
-                                                                                       data['_percent_str'],
-                                                                                       data['artist'],
-                                                                                       data['title'],
-                                                                                       data['audio_format'],
-                                                                                       data['_speed_str'])
-            self.set_status(status)
-        elif data['status'] == 'error':
-            status = "task {0}/{1} failed: {2}".format(data['index'] + 1, data['count'], str(e))
-            self.set_status(status)
-            time.sleep(8) # hang to let user read what happened
+            elif data['status'] == 'downloading':
+                status = "task {0}/{1}: downloading({2}) {3} - {4}.{5}, speed: {6}".format(data['index'] + 1,
+                                                                                           data['count'],
+                                                                                           data['_percent_str'],
+                                                                                           data['artist'],
+                                                                                           data['title'],
+                                                                                           data['audio_format'],
+                                                                                           data['_speed_str'])
+                self.set_status(status)
+            elif data['status'] == 'error':
+                status = "task {0}/{1} failed".format(data['index'] + 1, data['count'])
+                self.set_status(status)
+                time.sleep(8) # hang to let user see what happened
 
-        elif data['status'] == 'finished':
-            status = "task {0}/{1}: {2} downloaded".format(data['index'], data['count'], data["filename"])
-            self.set_status(status)
-            time.sleep(1)
-            status = "task {0}/{1}: converting to {2} - {3}.{4}".format(data['index'] + 1,
-                                                                        data['count'],
-                                                                        data['artist'],
-                                                                        data['title'],
-                                                                        data['audio_format'])
-            self.set_status(status)
+            elif data['status'] == 'finished':
+                status = "task {0}/{1}: {2} downloaded".format(data['index'], data['count'], data["filename"])
+                self.set_status(status)
+                time.sleep(1)
+                target_filename = "{0} - {1}.{2}".format(data['artist'], data['title'], data['audio_format'])
+                status = "task {0}/{1}: converting to {2}".format(data['index'] + 1,
+                                                                  data['count'],
+                                                                  target_filename)
+                self.set_status(status)
 
-            if (data['index'] + 1) == data['count']:
-                self.set_status("All tasks are finished.")
-                time.sleep(2)
-                self.reset_status()
+                # wait until file has been converted sucessfully, timeout 300s.
+                if not os.path.exists(target_filename):
+                    with open(target_filename, 'w'): pass
+
+                timeout = 0
+                while timeout > 0 and not os.path.isfile(target_filename):
+                    time.sleep(1)
+                    timeout -= 1
+
+                if (data['index'] + 1) == data['count']:
+                    self.music_list_view.check_downloaded_items()
+                    self.set_status("All tasks are finished.")
+                    time.sleep(4)
+                    self.reset_status()
 
 
     def set_status(self, caption):
@@ -385,7 +456,7 @@ class TerminalDownloader(object):
 
     def progress_hook(self, data):
         if 'error_msg' in data:
-            print("Error: {0}".format(data['error_msg']))
+            print(data['error_msg'])
         elif 'status' in data:
             if data['status'] == 'started':
                 print("preparing download......")
@@ -402,15 +473,15 @@ class TerminalDownloader(object):
                 sys.stdout.write(status)
                 sys.stdout.flush()
             elif data['status'] == 'error':
-                print("error occured: {0}".format(data['error_msg']))
+                print("error occured: ")#{0}".format(data['error_msg']))
+                print(data)
 
             elif data['status'] == 'finished':
                 print("")
 
 
     def start(self):
-        d = Downloader(config['items'], self.progress_hook)
-        d.start()
+        Downloader(config['items'], self.progress_hook).start()
     
 
 if __name__ == '__main__':
