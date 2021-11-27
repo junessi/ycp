@@ -146,13 +146,31 @@ class MusicListView(urwid.Frame):
         return pop_up
 
     def add_music(self, artist, title, link):
-        self.list_items.append(MusicItem([artist, title, link]))
-        self.list_items[-1].checkfile()
+        pos = self.find_music(artist, title)
+        if pos == -1:
+            self.list_items.append(MusicItem([artist, title, link]))
+            self.list_items[-1].checkfile()
+        else:
+            self.set_focus_position(pos)
 
     def edit_music(self, pos, artist, title, link):
         if pos >= 0 and pos < len(self.list_items):
             self.list_items[pos].update_data([artist, title, link])
             self.list_items[pos].checkfile()
+
+    def find_music(self, artist, title):
+        """
+        music key: (artist, title)
+        """
+        i = 0
+        count = len(self.list_items)
+        while i < count:
+            item = self.list_items[i].get_music_data()
+            if item["artist"] == artist and item["title"] == title:
+                break
+            i += 1
+
+        return i if i < count else -1
 
     def get_item_count(self):
         return len(self.list_items)
@@ -473,7 +491,7 @@ class TerminalDownloader(object):
                 sys.stdout.write(status)
                 sys.stdout.flush()
             elif data['status'] == 'error':
-                print("error occured: ")#{0}".format(data['error_msg']))
+                print("error occured: ")
                 print(data)
 
             elif data['status'] == 'finished':
