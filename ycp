@@ -204,6 +204,10 @@ class MusicListView(urwid.Frame):
         if pos >= 0:
             self.music_list.set_focus(pos)
 
+    def focus_top_position(self):
+        pos = -1 if len(self.list_items) == 0 else len(self.list_items) - 1
+        self.set_focus_position(pos)
+
     def remove_item(self):
         (_, pos) = self.music_list.get_focus()
         if pos >= 0:
@@ -290,6 +294,8 @@ class TUIApp(object):
         self.saving_music_list = False
         self.selecting_download_option = False
         self.item_editor_height = 4
+        self.unsaved = False
+        self.quiting_with_unsaved = False
 
         self.create_edit_dialog()
         self.create_music_list_view()
@@ -297,14 +303,13 @@ class TUIApp(object):
         self.main_view = urwid.Pile([('weight', self.terminal_rows - self.item_editor_height, self.music_list_view)])
         self.loop = urwid.MainLoop(self.main_view, self.PALETTE, unhandled_input = self.handle_input, pop_ups = True)
 
-    def refresh_main_view(self, display_item_editor = False, data = None):
+    def refresh_main_view(self, item_editor_data = None):
         self.main_view.contents.clear()
-        if display_item_editor:
+        if item_editor_data is not None:
             self.main_view.contents.append((self.item_editor, ('weight', self.item_editor_height)))
-            if data is not None:
-                self.artist_edit.set_edit_text(data["artist"])
-                self.title_edit.set_edit_text(data["title"])
-                self.link_edit.set_edit_text(data["link"])
+            self.artist_edit.set_edit_text(item_editor_data["artist"])
+            self.title_edit.set_edit_text(item_editor_data["title"])
+            self.link_edit.set_edit_text(item_editor_data["link"])
         self.main_view.contents.append((self.music_list_view, ('weight', self.terminal_rows - self.item_editor_height)))
 
     def create_edit_dialog(self):
@@ -339,8 +344,15 @@ class TUIApp(object):
             elif self.saving_music_list:
                 self.music_list_view.set_focus('body')
                 self.saving_music_list = False
+            elif self.quiting_with_unsaved:
+                self.quiting_with_unsaved = False
             else:
-                self.exit()
+                if self.unsaved:
+                    self.set_status("Save changes to ? Y: Yes    N: No    ESC: Cancel")
+                    self.quiting_with_unsaved = True
+                    return
+                else:
+                    self.exit()
 
             self.reset_status()
         elif key in ('a', 'A'):
@@ -348,14 +360,14 @@ class TUIApp(object):
                 self.start_download_all()
             elif self.adding_music == False:
                 self.adding_music = True
-                self.refresh_main_view(True, {'artist': '', 'title': '', 'link': ''})
+                self.refresh_main_view({'artist': '', 'title': '', 'link': ''})
                 self.set_status("Adding music")
         elif key in ('e', 'E'):
             if self.editing_music == False:
                 self.editing_music = True
                 self.editing_music_pos = self.music_list_view.get_focus_position()
                 data = self.music_list_view.get_music(self.editing_music_pos)
-                self.refresh_main_view(True, data)
+                self.refresh_main_view(data)
                 self.set_status("Editing music")
         elif key in ('d', 'D'):
             self.selecting_download_option = True
@@ -363,6 +375,8 @@ class TUIApp(object):
         elif key in ('n', 'N'):
             if self.selecting_download_option:
                 self.start_download_new_items()
+            elif self.quiting_with_unsaved:
+                self.exit()
         elif key in ('s', 'S'):
             if self.selecting_download_option:
                 self.start_download_selected_item()
@@ -371,6 +385,12 @@ class TUIApp(object):
                 self.edit_save_file_name()
         elif key in ('x', 'X'):
             self.music_list_view.remove_item()
+            self.unsaved = True
+        elif key in ('y', 'Y'):
+            self.save_music_list(self.config["path"])
+            self.unsaved = False
+            self.quiting_with_unsaved = False
+            self.handle_input('q')
         elif key == 'enter':
             if self.saving_music_list:
                 self.save_music_list(self.music_list_view.get_footer_text())
@@ -381,12 +401,15 @@ class TUIApp(object):
         with open(file_name, "w") as f:
             json.dump({"items": items}, f, indent = 4)
 
+        self.unsaved = False
+
     def save_music(self, artist, title, link):
         if self.adding_music:
             self.music_list_view.add_music(artist, title, link)
         elif self.editing_music:
             self.music_list_view.edit_music(self.editing_music_pos, artist, title, link)
         self.handle_input('q')
+        self.unsaved = True
 
     def start_download(self, items_to_download):
         self.selecting_download_option = False
