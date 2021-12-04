@@ -348,7 +348,7 @@ class TUIApp(object):
                 self.quiting_with_unsaved = False
             else:
                 if self.unsaved:
-                    self.set_status("Save changes to ? Y: Yes    N: No    ESC: Cancel")
+                    self.set_status("Save changes to {0}? Y: Yes    N: No    ESC: Cancel".format(self.config["path"]))
                     self.quiting_with_unsaved = True
                     return
                 else:
