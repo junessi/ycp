@@ -12,10 +12,11 @@ from enum import Enum
 
 class AppState(Enum):
     INITIAL = 0
-    ADDING_ITEM = 1
-    EDITING_ITEM = 2
+    ADDING = 1
+    EDITING = 2
     SAVING = 3
-    SAVING_AFTER_CHANGED = 4
+    SAVING_BEFORE_EXIT = 4
+    SELECTING_DOWNLOAD_OPTION = 5
 
 class YCPConfig(object):
     def __init__(self, path):
@@ -108,7 +109,7 @@ class MusicList(urwid.ListBox):
 
 
 class MusicListView(urwid.Frame):
-    signals = ['close']
+    # signals = ['close']
     def __init__(self, items, height):
         self.height = height
 
@@ -289,7 +290,8 @@ class TUIApp(object):
             ("notifier_inactive",   "black",            "dark gray"),
             ("reveal_focus",        "black",            "dark cyan", "standout"),
             ("item_downloaded",     "light green",      ""),
-            ("item_not_downloaded", "light red",        "")
+            ("item_not_downloaded", "light red",        ""),
+            ("status_bar",          "",                 "dark red")
         ]
 
         # Get terminal size
@@ -297,13 +299,10 @@ class TUIApp(object):
 
         self.config = config
         self.audio_format = "mp3"
-        self.adding_music = False
-        self.editing_music = False
-        self.saving_music_list = False
         self.selecting_download_option = False
         self.item_editor_height = 4
         self.unsaved = False
-        self.quiting_with_unsaved = False
+        self.state = AppState.INITIAL
 
         self.create_edit_dialog()
         self.create_music_list_view()
@@ -343,66 +342,79 @@ class TUIApp(object):
         self.handle_input('e')
 
     def handle_input(self, key):
-        if key in ('q', 'Q', 'esc'):
-            if self.adding_music or self.editing_music or self.selecting_download_option:
-                self.adding_music = False
-                self.editing_music = False
-                self.selecting_download_option = False
-                self.refresh_main_view()
-            elif self.saving_music_list:
-                self.music_list_view.set_focus('body')
-                self.saving_music_list = False
-            elif self.quiting_with_unsaved:
-                self.quiting_with_unsaved = False
-            else:
+        if self.state == AppState.INITIAL:
+            if key in ('q', 'Q', 'esc'):
                 if self.unsaved:
+                    self.state = AppState.SAVING_BEFORE_EXIT
                     self.set_status("Save changes to {0}? Y: Yes    N: No    ESC: Cancel".format(self.config["path"]))
-                    self.quiting_with_unsaved = True
                     return
-                else:
-                    self.exit()
 
-            self.reset_status()
-        elif key in ('a', 'A'):
-            if self.selecting_download_option:
-                self.start_download_all()
-            elif self.adding_music == False:
-                self.adding_music = True
+                self.exit()
+            elif key in ('a', 'A'):
+                self.state = AppState.ADDING
                 self.refresh_main_view({'artist': '', 'title': '', 'link': ''})
-                self.set_status("Adding music")
-        elif key in ('e', 'E'):
-            if self.editing_music == False:
-                self.editing_music = True
+                self.set_status("adding song")
+            elif key in ('e', 'E'):
+                self.state = AppState.EDITING
                 self.editing_music_pos = self.music_list_view.get_focus_position()
                 data = self.music_list_view.get_music(self.editing_music_pos)
                 self.refresh_main_view(data)
-                self.set_status("Editing music")
-        elif key in ('d', 'D'):
-            self.selecting_download_option = True
-            self.set_status("Download> A: All    S: Selected item    N: New items    ESC: Cancel")
-        elif key in ('n', 'N'):
-            if self.selecting_download_option:
-                self.start_download_new_items()
-            elif self.quiting_with_unsaved:
-                self.exit()
-        elif key in ('s', 'S'):
-            if self.selecting_download_option:
-                self.start_download_selected_item()
-            elif self.saving_music_list == False:
-                self.saving_music_list = True
+                self.set_status("editing song")
+            elif key in ('d', 'D'):
+                self.state = AppState.SELECTING_DOWNLOAD_OPTION
+                self.set_status("Download> A: All    S: Selected item    N: New items    ESC: Cancel")
+            elif key in ('s', 'S'):
+                self.state = AppState.SAVING
                 self.edit_save_file_name()
-        elif key in ('x', 'X'):
-            self.music_list_view.remove_item()
-            self.unsaved = True
-        elif key in ('y', 'Y'):
-            self.save_music_list(self.config["path"])
-            self.unsaved = False
-            self.quiting_with_unsaved = False
-            self.handle_input('q')
-        elif key == 'enter':
-            if self.saving_music_list:
+            elif key in ('x', 'X'):
+                self.music_list_view.remove_item()
+                self.unsaved = True
+
+        elif self.state == AppState.SAVING:
+            if key in ('q', 'Q', 'esc'):
+                pass
+            elif key in ('enter'):
                 self.save_music_list(self.music_list_view.get_footer_text())
-                self.handle_input('q')
+            else:
+                return
+
+            self.state = AppState.INITIAL
+            self.reset_status()
+            self.music_list_view.set_focus('body')
+
+        elif self.state == AppState.SAVING_BEFORE_EXIT:
+            if key in ('y', 'Y'):
+                self.save_music_list(self.config["path"])
+                self.exit()
+            elif key in ('n', 'N'):
+                self.exit()
+            elif key in ('q', 'Q', 'esc'):
+                self.state = AppState.INITIAL
+                self.reset_status()
+
+        elif self.state == AppState.SELECTING_DOWNLOAD_OPTION:
+            if key in ('a', 'A'):
+                self.start_download_all()
+            elif key in ('n', 'N'):
+                self.start_download_new_items()
+            elif key in ('s', 'S'):
+                self.start_download_selected_item()
+            else:
+                return
+
+            self.state = AppState.INITIAL
+
+        elif self.state == AppState.ADDING:
+            if key in ('q', 'Q', 'esc'):
+                self.refresh_main_view()
+                self.reset_status()
+                self.state = AppState.INITIAL
+
+        elif self.state == AppState.EDITING:
+            if key in ('q', 'Q', 'esc'):
+                self.refresh_main_view()
+                self.reset_status()
+                self.state = AppState.INITIAL
 
     def save_music_list(self, file_name):
         items = self.music_list_view.get_all_musics()
@@ -412,15 +424,16 @@ class TUIApp(object):
         self.unsaved = False
 
     def save_music(self, artist, title, link):
-        if self.adding_music:
+        if self.state == AppState.ADDING:
             self.music_list_view.add_music(artist, title, link)
-        elif self.editing_music:
+        elif self.state == AppState.EDITING:
             self.music_list_view.edit_music(self.editing_music_pos, artist, title, link)
+        else:
+            return
         self.handle_input('q')
         self.unsaved = True
 
     def start_download(self, items_to_download):
-        self.selecting_download_option = False
         Downloader(items_to_download, self.progress_hook).start()
 
     def start_download_all(self):
