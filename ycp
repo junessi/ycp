@@ -8,6 +8,14 @@ import argparse
 import os.path
 import sys
 from youtube_dl.utils import DownloadError
+from enum import Enum
+
+class AppState(Enum):
+    INITIAL = 0
+    ADDING_ITEM = 1
+    EDITING_ITEM = 2
+    SAVING = 3
+    SAVING_AFTER_CHANGED = 4
 
 class YCPConfig(object):
     def __init__(self, path):
